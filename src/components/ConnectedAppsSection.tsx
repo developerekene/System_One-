@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   ArrowUpRight,
-  ExternalLink,
   Globe,
   Monitor,
   PauseCircle,
@@ -15,6 +14,7 @@ import {
 import { formatFirestoreTimestamp, getTagButtonClasses } from '../lib/formatters';
 import {
   createConnectedApp,
+  createCrossPlatformNotification,
   deleteConnectedApp,
   logSecurityEvent,
   updateConnectedAppStatus,
@@ -23,6 +23,7 @@ import {
   AccountTag,
   AppStatus,
   ConnectedApp,
+  NotificationPreferences,
   PlatformType,
 } from '../types/systemOne';
 
@@ -30,13 +31,9 @@ interface ConnectedAppsSectionProps {
   authUser: User;
   connectedApps: ConnectedApp[];
   availableTags: AccountTag[];
+  notificationPreferences: NotificationPreferences;
   searchQuery: string;
   selectedTagFilter: string | null;
-  onSimulateIncomingRedirect: (
-    redirectTo: string,
-    platform: PlatformType,
-    appName: string
-  ) => void;
   onLaunchReturn: (redirectTo: string, platform: PlatformType, appName: string) => void;
 }
 
@@ -44,9 +41,9 @@ export function ConnectedAppsSection({
   authUser,
   connectedApps,
   availableTags,
+  notificationPreferences,
   searchQuery,
   selectedTagFilter,
-  onSimulateIncomingRedirect,
   onLaunchReturn,
 }: ConnectedAppsSectionProps) {
   const [platformFilter, setPlatformFilter] = useState<'all' | PlatformType>('all');
@@ -57,14 +54,9 @@ export function ConnectedAppsSection({
   const [newPlatform, setNewPlatform] = useState<PlatformType>('web');
   const [newRedirectUri, setNewRedirectUri] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [newTags, setNewTags] = useState<string[]>(['Core Identity']);
+  const [newTags, setNewTags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // Redirect simulator state
-  const [simUrl, setSimUrl] = useState('systemone-pulse://auth/callback?screen=home');
-  const [simPlatform, setSimPlatform] = useState<PlatformType>('mobile');
-  const [simAppName, setSimAppName] = useState('Pulse Mobile Companion');
 
   const q = searchQuery.trim().toLowerCase();
 
@@ -101,7 +93,7 @@ export function ConnectedAppsSection({
         scopes: ['profile:read', 'email:read', 'session:persist'],
       });
       await logSecurityEvent(authUser.uid, {
-        title: `Registered connected app: ${newName.trim()}`,
+        title: `Added app: ${newName.trim()}`,
         category: 'app',
         platform: newPlatform,
         provider: 'system_one_sso',
@@ -109,12 +101,26 @@ export function ConnectedAppsSection({
         tags: newTags,
         status: 'verified',
       });
+      if (notificationPreferences.appAuthorizationAlert) {
+        await createCrossPlatformNotification(
+          authUser.uid,
+          {
+            title: `Connected ${newName.trim()}`,
+            message: `${newName.trim()} (${newPlatform}) can now use your System One account.`,
+            category: 'app',
+            sourcePlatform: newPlatform,
+            actionUrl: newRedirectUri.trim(),
+          },
+          notificationPreferences
+        );
+      }
       setNewName('');
       setNewDescription('');
       setNewRedirectUri('');
+      setNewTags([]);
       setShowAddForm(false);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unable to register application.');
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to add application.');
     } finally {
       setSubmitting(false);
     }
@@ -132,6 +138,18 @@ export function ConnectedAppsSection({
       tags: app.tags,
       status: nextStatus === 'revoked' ? 'revoked' : 'completed',
     });
+    if (notificationPreferences.appAuthorizationAlert) {
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: `${app.name} is now ${nextStatus}`,
+          message: `Access for ${app.name} was changed to ${nextStatus}.`,
+          category: 'app',
+          sourcePlatform: app.platform,
+        },
+        notificationPreferences
+      );
+    }
   };
 
   const handleDeleteApp = async (app: ConnectedApp) => {
@@ -146,19 +164,14 @@ export function ConnectedAppsSection({
 
   return (
     <div className="space-y-8">
-      {/* Header & Controls */}
       <section className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-              Connected Applications & SSO Redirects
+              Your Connected Applications
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Authorize mobile, desktop, and web clients and manage allowed{' '}
-              <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
-                redirect_to
-              </code>{' '}
-              return destinations.
+              Add the web, mobile, and desktop apps where you sign in with System One.
             </p>
           </div>
           <button
@@ -167,7 +180,7 @@ export function ConnectedAppsSection({
             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 rounded-xl transition-colors whitespace-nowrap shrink-0"
           >
             <Plus className="w-4 h-4" />
-            <span>{showAddForm ? 'Close Form' : 'Register App'}</span>
+            <span>{showAddForm ? 'Close Form' : 'Add App'}</span>
           </button>
         </div>
 
@@ -178,7 +191,7 @@ export function ConnectedAppsSection({
             className="py-6 border-b border-slate-100 space-y-4"
           >
             <h2 className="text-base font-semibold text-slate-900">
-              Register New Application
+              Add an Application
             </h2>
             {errorMsg && (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800">
@@ -191,7 +204,7 @@ export function ConnectedAppsSection({
                   htmlFor="app-name"
                   className="block text-sm font-medium text-slate-800 mb-1"
                 >
-                  Application Name
+                  App Name
                 </label>
                 <input
                   id="app-name"
@@ -200,7 +213,7 @@ export function ConnectedAppsSection({
                   maxLength={60}
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Fieldnotes Mobile"
+                  placeholder="Enter application name"
                   className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
                 />
               </div>
@@ -210,7 +223,7 @@ export function ConnectedAppsSection({
                   htmlFor="app-platform"
                   className="block text-sm font-medium text-slate-800 mb-1"
                 >
-                  Platform
+                  Device Type
                 </label>
                 <select
                   id="app-platform"
@@ -218,9 +231,9 @@ export function ConnectedAppsSection({
                   onChange={(e) => setNewPlatform(e.target.value as PlatformType)}
                   className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
                 >
-                  <option value="web">Web Application</option>
-                  <option value="mobile">Mobile App (Deep Link)</option>
-                  <option value="desktop">Desktop Client</option>
+                  <option value="web">Web App</option>
+                  <option value="mobile">Mobile App</option>
+                  <option value="desktop">Desktop App</option>
                 </select>
               </div>
 
@@ -229,7 +242,7 @@ export function ConnectedAppsSection({
                   htmlFor="app-redirect-uri"
                   className="block text-sm font-medium text-slate-800 mb-1"
                 >
-                  Callback / redirect_to URI
+                  Return Link (redirect_to)
                 </label>
                 <input
                   id="app-redirect-uri"
@@ -238,7 +251,7 @@ export function ConnectedAppsSection({
                   maxLength={500}
                   value={newRedirectUri}
                   onChange={(e) => setNewRedirectUri(e.target.value)}
-                  placeholder="https://app.example.com/auth or myapp://callback"
+                  placeholder="https://... or myapp://callback"
                   className="w-full px-3.5 py-2.5 text-sm font-mono border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
                 />
               </div>
@@ -249,7 +262,7 @@ export function ConnectedAppsSection({
                 htmlFor="app-desc"
                 className="block text-sm font-medium text-slate-800 mb-1"
               >
-                Description
+                Short Description (Optional)
               </label>
               <input
                 id="app-desc"
@@ -257,31 +270,33 @@ export function ConnectedAppsSection({
                 maxLength={200}
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
-                placeholder="Cross-platform notes workspace synced with System One"
+                placeholder="What this app is used for"
                 className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
               />
             </div>
 
-            <div>
-              <span className="block text-sm font-medium text-slate-800 mb-2">
-                Assign Tags
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {availableTags.map((tag) => (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    onClick={() => handleToggleNewTag(tag.label)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${getTagButtonClasses(
-                      tag.tone,
-                      newTags.includes(tag.label)
-                    )}`}
-                  >
-                    {tag.label}
-                  </button>
-                ))}
+            {availableTags.length > 0 && (
+              <div>
+                <span className="block text-sm font-medium text-slate-800 mb-2">
+                  Labels
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {availableTags.map((tag) => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => handleToggleNewTag(tag.label)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${getTagButtonClasses(
+                        tag.tone,
+                        newTags.includes(tag.label)
+                      )}`}
+                    >
+                      {tag.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex justify-end gap-3">
               <button
@@ -296,7 +311,7 @@ export function ConnectedAppsSection({
                 disabled={submitting}
                 className="px-5 py-2 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-xl"
               >
-                {submitting ? 'Saving...' : 'Save Application'}
+                {submitting ? 'Saving...' : 'Save App'}
               </button>
             </div>
           </form>
@@ -316,7 +331,7 @@ export function ConnectedAppsSection({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                {p === 'all' ? 'All Platforms' : p}
+                {p === 'all' ? 'All Devices' : p}
               </button>
             ))}
           </div>
@@ -341,12 +356,16 @@ export function ConnectedAppsSection({
 
         {/* Apps Directory */}
         {filteredApps.length === 0 ? (
-          <div className="py-12 text-center">
+          <div className="py-12 text-center space-y-2">
             <p className="text-sm font-medium text-slate-900">
-              No connected applications match your current filters.
+              {connectedApps.length === 0
+                ? 'You have not added any apps yet.'
+                : 'No apps match your current search or filter.'}
             </p>
-            <p className="mt-1 text-sm text-slate-500">
-              Adjust your search, tag, or platform filter, or register a new application above.
+            <p className="text-sm text-slate-500">
+              {connectedApps.length === 0
+                ? 'Click "Add App" above whenever you want to connect one of your web, mobile, or desktop apps.'
+                : 'Try clearing your search or changing the filters above.'}
             </p>
           </div>
         ) : (
@@ -418,7 +437,7 @@ export function ConnectedAppsSection({
                         }
                         className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-white bg-sky-700 hover:bg-sky-800 rounded-lg transition-colors whitespace-nowrap"
                       >
-                        <span>Return via SSO</span>
+                        <span>Open App</span>
                         <ArrowUpRight className="w-3.5 h-3.5" />
                       </button>
                     )}
@@ -473,119 +492,6 @@ export function ConnectedAppsSection({
             })}
           </div>
         )}
-      </section>
-
-      {/* Interactive redirect_to Tester & Integration Reference */}
-      <section className="bg-gradient-to-br from-white via-white to-sky-50/60 border border-slate-200 rounded-2xl p-6 sm:p-8">
-        <div className="max-w-3xl">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Test Incoming <code className="font-mono text-base">redirect_to</code> Flow
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Verify how external web, mobile, and desktop apps hand off to System One with a{' '}
-            <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
-              redirect_to
-            </code>{' '}
-            query parameter while preserving session state across transitions.
-          </p>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-          <div className="md:col-span-3">
-            <label
-              htmlFor="sim-app-name"
-              className="block text-xs font-medium text-slate-700 mb-1"
-            >
-              Origin App Name
-            </label>
-            <input
-              id="sim-app-name"
-              type="text"
-              value={simAppName}
-              onChange={(e) => setSimAppName(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label
-              htmlFor="sim-platform"
-              className="block text-xs font-medium text-slate-700 mb-1"
-            >
-              Platform
-            </label>
-            <select
-              id="sim-platform"
-              value={simPlatform}
-              onChange={(e) => setSimPlatform(e.target.value as PlatformType)}
-              className="w-full px-3 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
-            >
-              <option value="mobile">Mobile</option>
-              <option value="desktop">Desktop</option>
-              <option value="web">Web</option>
-            </select>
-          </div>
-          <div className="md:col-span-5">
-            <label
-              htmlFor="sim-url"
-              className="block text-xs font-medium text-slate-700 mb-1"
-            >
-              redirect_to Target
-            </label>
-            <input
-              id="sim-url"
-              type="text"
-              value={simUrl}
-              onChange={(e) => setSimUrl(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm font-mono bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <button
-              type="button"
-              onClick={() => onSimulateIncomingRedirect(simUrl, simPlatform, simAppName)}
-              className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition-colors whitespace-nowrap"
-            >
-              <ExternalLink className="w-4 h-4" />
-              <span>Activate</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setSimAppName('Pulse Mobile Companion');
-              setSimPlatform('mobile');
-              setSimUrl('systemone-pulse://auth/callback?screen=home');
-            }}
-            className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg"
-          >
-            Mobile Deep Link Preset
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSimAppName('Studio Desktop Client');
-              setSimPlatform('desktop');
-              setSimUrl('systemone-desktop://sso/complete');
-            }}
-            className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg"
-          >
-            Desktop Scheme Preset
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSimAppName('Atlas Web Workspace');
-              setSimPlatform('web');
-              setSimUrl(`${window.location.origin}/?workspace=atlas`);
-            }}
-            className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg"
-          >
-            Web App Preset
-          </button>
-        </div>
       </section>
     </div>
   );

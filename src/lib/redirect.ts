@@ -233,15 +233,24 @@ export function isRedirectTrusted(
 
 export function buildReturnDestinationUrl(
   context: RedirectContext,
-  userSession: { uid: string; email: string | null; displayName: string | null }
+  userSession: {
+    uid: string;
+    email: string | null;
+    displayName: string | null;
+    unreadNotifications?: number;
+  }
 ): string {
   const base = context.redirectTo;
-  const paramsToAppend = {
+  const paramsToAppend: Record<string, string> = {
     sso_status: 'authenticated',
     sso_uid: userSession.uid,
     sso_platform: context.platform,
     sso_origin: 'system_one',
   };
+
+  if (typeof userSession.unreadNotifications === 'number') {
+    paramsToAppend.sso_unread_notifications = String(userSession.unreadNotifications);
+  }
 
   if (base.startsWith('/')) {
     const resolved = new URL(base, window.location.origin);

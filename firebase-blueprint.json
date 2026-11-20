@@ -95,7 +95,7 @@
     },
     "NotificationPreferences": {
       "title": "NotificationPreferences",
-      "description": "Account notification settings across platforms.",
+      "description": "Cross-platform notification channel and event settings.",
       "type": "object",
       "properties": {
         "securityDigest": {
@@ -108,18 +108,38 @@
         },
         "appAuthorizationAlert": {
           "type": "boolean",
-          "description": "Alert when a connected application requests SSO access."
+          "description": "Alert when a connected application connects or changes status."
+        },
+        "profileUpdateAlert": {
+          "type": "boolean",
+          "description": "Notify across devices when profile details are updated."
+        },
+        "webEnabled": {
+          "type": "boolean",
+          "description": "Deliver notifications to web apps."
+        },
+        "mobileEnabled": {
+          "type": "boolean",
+          "description": "Deliver notifications to mobile apps."
+        },
+        "desktopEnabled": {
+          "type": "boolean",
+          "description": "Deliver notifications to desktop apps."
         }
       },
       "required": [
         "securityDigest",
         "newDeviceAlert",
-        "appAuthorizationAlert"
+        "appAuthorizationAlert",
+        "profileUpdateAlert",
+        "webEnabled",
+        "mobileEnabled",
+        "desktopEnabled"
       ]
     },
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Unified System One identity profile, account settings, and cross-platform security preferences.",
+      "description": "Unified System One identity profile, elaborate personal/contact/address/work details, and cross-platform preferences.",
       "type": "object",
       "properties": {
         "uid": {
@@ -136,6 +156,21 @@
           "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
           "description": "Primary account email."
         },
+        "secondaryEmail": {
+          "type": "string",
+          "maxLength": 254,
+          "description": "Optional secondary or backup email."
+        },
+        "firstName": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "User first name."
+        },
+        "lastName": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "User last name."
+        },
         "displayName": {
           "type": "string",
           "minLength": 1,
@@ -148,20 +183,90 @@
           "pattern": "^[a-z0-9_.-]*$",
           "description": "Unified cross-app username handle."
         },
+        "dateOfBirth": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "User date of birth in YYYY-MM-DD format."
+        },
+        "gender": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional gender or pronouns preference."
+        },
         "bio": {
           "type": "string",
           "maxLength": 300,
-          "description": "Short profile summary."
+          "description": "Short personal introduction."
         },
         "phone": {
           "type": "string",
           "maxLength": 32,
-          "description": "Optional recovery phone number."
+          "description": "Phone number."
+        },
+        "website": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Personal website or portfolio link."
+        },
+        "streetAddress": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Street address."
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "City."
+        },
+        "stateRegion": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "State, province, or region."
+        },
+        "postalCode": {
+          "type": "string",
+          "maxLength": 24,
+          "description": "Postal or ZIP code."
+        },
+        "country": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Country."
         },
         "location": {
           "type": "string",
           "maxLength": 80,
-          "description": "City or region."
+          "description": "Formatted city/country summary."
+        },
+        "timezone": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "User timezone."
+        },
+        "preferredLanguage": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Preferred interface language."
+        },
+        "occupation": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Job title or occupation."
+        },
+        "company": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Company, school, or organization."
+        },
+        "emergencyContactName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Emergency contact person name."
+        },
+        "emergencyContactPhone": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Emergency contact phone number."
         },
         "photoURL": {
           "type": "string",
@@ -205,11 +310,28 @@
       "required": [
         "uid",
         "email",
+        "secondaryEmail",
+        "firstName",
+        "lastName",
         "displayName",
         "handle",
+        "dateOfBirth",
+        "gender",
         "bio",
         "phone",
+        "website",
+        "streetAddress",
+        "city",
+        "stateRegion",
+        "postalCode",
+        "country",
         "location",
+        "timezone",
+        "preferredLanguage",
+        "occupation",
+        "company",
+        "emergencyContactName",
+        "emergencyContactPhone",
         "photoURL",
         "primaryPlatform",
         "linkedProviders",
@@ -433,6 +555,91 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "AccountNotification": {
+      "title": "AccountNotification",
+      "description": "Cross-platform account notification synced across web, mobile, and desktop apps.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the notification."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Plain-language notification title."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Plain-language notification details."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["account", "security", "app", "system"],
+          "description": "Notification category."
+        },
+        "sourcePlatform": {
+          "type": "string",
+          "enum": ["web", "mobile", "desktop"],
+          "description": "Platform that generated this notification."
+        },
+        "targetPlatforms": {
+          "type": "array",
+          "description": "Platforms this notification is delivered to (web, mobile, desktop)."
+        },
+        "read": {
+          "type": "boolean",
+          "description": "Whether the user has read this notification."
+        },
+        "readAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp when the notification was marked read."
+        },
+        "actionUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional app or route link related to the notification."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of notification creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last read/status update."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "message",
+        "category",
+        "sourcePlatform",
+        "targetPlatforms",
+        "read",
+        "readAt",
+        "actionUrl",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -451,6 +658,10 @@
     "/users/{userId}/tags/{tagId}": {
       "schema": { "$ref": "#/entities/AccountTag" },
       "description": "User-managed tags for organizing connected applications and security activity."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AccountNotification" },
+      "description": "Cross-platform notifications accessible across all user platforms (web, mobile, desktop)."
     }
   }
 }

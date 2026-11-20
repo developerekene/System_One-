@@ -2,6 +2,7 @@ import { User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   onSnapshot,
@@ -9,17 +10,20 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore';
 import {
+  AccountNotification,
   AccountTag,
   AppStatus,
   BLUEPRINT_LIMITS,
   ConnectedApp,
   EventCategory,
   EventStatus,
+  NotificationCategory,
   NotificationPreferences,
   OperationType,
   PlatformType,
@@ -30,8 +34,20 @@ import {
 } from '../types/systemOne';
 import { db, handleFirestoreError } from './firebase';
 
-function sanitizeString(value: string | null | undefined, maxLen: number): string {
-  return (value ?? '').trim().slice(0, maxLen);
+function sanitizeString(value: unknown, maxLen: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLen) : '';
+}
+
+function isFirestoreTimestampLike(value: unknown): boolean {
+  if (value instanceof Timestamp) return true;
+  if (typeof value === 'object' && value !== null) {
+    const candidate = value as { seconds?: unknown; nanoseconds?: unknown; toDate?: unknown };
+    return (
+      (typeof candidate.seconds === 'number' && typeof candidate.nanoseconds === 'number') ||
+      typeof candidate.toDate === 'function'
+    );
+  }
+  return false;
 }
 
 function sanitizeHandle(email: string, displayName: string): string {
@@ -53,18 +69,89 @@ function sanitizeTagArray(tags: string[], maxCount: number): string[] {
   return unique.slice(0, maxCount);
 }
 
+function detectBrowserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone.slice(0, BLUEPRINT_LIMITS.MAX_TIMEZONE);
+  } catch {
+    return '';
+  }
+}
+
 export function makeSafeId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
   const stamp = Date.now().toString(36);
   return `${prefix}_${stamp}_${rand}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
 }
 
+const REQUIRED_PROFILE_KEYS = [
+  'uid',
+  'email',
+  'secondaryEmail',
+  'firstName',
+  'lastName',
+  'displayName',
+  'handle',
+  'dateOfBirth',
+  'gender',
+  'bio',
+  'phone',
+  'website',
+  'streetAddress',
+  'city',
+  'stateRegion',
+  'postalCode',
+  'country',
+  'location',
+  'timezone',
+  'preferredLanguage',
+  'occupation',
+  'company',
+  'emergencyContactName',
+  'emergencyContactPhone',
+  'photoURL',
+  'primaryPlatform',
+  'linkedProviders',
+  'tags',
+  'securityPreferences',
+  'notificationPreferences',
+  'createdAt',
+  'updatedAt',
+] as const;
+
+const REQUIRED_SECURITY_KEYS = [
+  'twoFactorNotice',
+  'loginAlerts',
+  'sessionTimeoutMinutes',
+  'requireReauthForSensitive',
+  'trustedRedirectOnly',
+  'passwordRecoveryEmail',
+  'humanVerified',
+  'humanVerifiedAt',
+  'biometricsEnabled',
+  'pinConfigured',
+  'pinHash',
+  'pinUpdatedAt',
+  'pinExpiresAt',
+  'authenticatorEnabled',
+  'authenticatorSecret',
+] as const;
+
+const REQUIRED_NOTIFICATION_KEYS = [
+  'securityDigest',
+  'newDeviceAlert',
+  'appAuthorizationAlert',
+  'profileUpdateAlert',
+  'webEnabled',
+  'mobileEnabled',
+  'desktopEnabled',
+] as const;
+
 export async function ensureUserProfileProvisioned(
   user: User,
   preferredPlatform: PlatformType = 'web'
 ): Promise<UserProfile> {
   if (!user.emailVerified) {
-    throw new Error('Email verification is required before activating System One profile storage.');
+    throw new Error('Please confirm your email address before opening your profile.');
   }
 
   const userPath = `users/${user.uid}`;
@@ -81,43 +168,202 @@ export async function ensureUserProfileProvisioned(
     user.providerData.map((p) => p.providerId).filter(Boolean),
     5
   );
+  const effectiveProviders = providerIds.length > 0 ? providerIds : ['password'];
   const email = sanitizeString(user.email, BLUEPRINT_LIMITS.MAX_EMAIL);
 
   if (existingSnap && existingSnap.exists()) {
-    const existingData = normalizeUserProfile(existingSnap.data() as UserProfile);
+    const rawDoc = existingSnap.data() as Record<string, unknown>;
+    const existingData = normalizeUserProfile(
+      {
+        ...(rawDoc as Partial<UserProfile>),
+        uid: user.uid,
+        email: email || (rawDoc.email as string) || '',
+      },
+      user
+    );
+
+    const rawSec = (rawDoc.securityPreferences as Record<string, unknown> | undefined) ?? {};
+    const rawNotif = (rawDoc.notificationPreferences as Record<string, unknown> | undefined) ?? {};
+
+    const missingTopKey = REQUIRED_PROFILE_KEYS.some((k) => rawDoc[k] === undefined);
+    const missingSecKey = REQUIRED_SECURITY_KEYS.some((k) => rawSec[k] === undefined);
+    const missingNotifKey = REQUIRED_NOTIFICATION_KEYS.some((k) => rawNotif[k] === undefined);
+    const extraTopKeys = Object.keys(rawDoc).filter(
+      (k) => !(REQUIRED_PROFILE_KEYS as readonly string[]).includes(k)
+    );
+    const extraSecKeys = Object.keys(rawSec).filter(
+      (k) => !(REQUIRED_SECURITY_KEYS as readonly string[]).includes(k)
+    );
+    const extraNotifKeys = Object.keys(rawNotif).filter(
+      (k) => !(REQUIRED_NOTIFICATION_KEYS as readonly string[]).includes(k)
+    );
+
+    const hasValidCreatedAt = isFirestoreTimestampLike(rawDoc.createdAt);
+    const hasValidUid = typeof rawDoc.uid === 'string' && rawDoc.uid === user.uid;
+
     const providersChanged =
-      JSON.stringify(existingData.linkedProviders) !== JSON.stringify(providerIds);
-    if (providersChanged || existingData.email !== email) {
+      JSON.stringify(rawDoc.linkedProviders ?? []) !== JSON.stringify(effectiveProviders);
+    const emailChanged = rawDoc.email !== email && Boolean(email);
+
+    const stringKeysToValidate: Array<keyof UserProfile> = [
+      'email',
+      'secondaryEmail',
+      'firstName',
+      'lastName',
+      'displayName',
+      'handle',
+      'dateOfBirth',
+      'gender',
+      'bio',
+      'phone',
+      'website',
+      'streetAddress',
+      'city',
+      'stateRegion',
+      'postalCode',
+      'country',
+      'location',
+      'timezone',
+      'preferredLanguage',
+      'occupation',
+      'company',
+      'emergencyContactName',
+      'emergencyContactPhone',
+      'photoURL',
+    ];
+    const stringFieldInvalid = stringKeysToValidate.some(
+      (k) => rawDoc[k] !== existingData[k]
+    );
+    const arrayFieldInvalid =
+      !Array.isArray(rawDoc.tags) ||
+      JSON.stringify(rawDoc.tags) !== JSON.stringify(existingData.tags);
+    const secFieldInvalid = REQUIRED_SECURITY_KEYS.some(
+      (k) => rawSec[k] !== existingData.securityPreferences[k]
+    );
+    const notifFieldInvalid = REQUIRED_NOTIFICATION_KEYS.some(
+      (k) => rawNotif[k] !== existingData.notificationPreferences[k]
+    );
+
+    const needsSanitization =
+      stringFieldInvalid ||
+      arrayFieldInvalid ||
+      secFieldInvalid ||
+      notifFieldInvalid ||
+      rawDoc.primaryPlatform !== existingData.primaryPlatform;
+
+    if (
+      missingTopKey ||
+      missingSecKey ||
+      missingNotifKey ||
+      extraTopKeys.length > 0 ||
+      extraSecKeys.length > 0 ||
+      extraNotifKeys.length > 0 ||
+      !hasValidCreatedAt ||
+      !hasValidUid ||
+      providersChanged ||
+      emailChanged ||
+      needsSanitization
+    ) {
       try {
-        await updateDoc(userRef, {
-          linkedProviders: providerIds.length > 0 ? providerIds : ['password'],
-          email,
+        const updatePayload: Record<string, unknown> = {
+          email: existingData.email,
+          secondaryEmail: existingData.secondaryEmail,
+          firstName: existingData.firstName,
+          lastName: existingData.lastName,
+          displayName: existingData.displayName,
+          handle: existingData.handle,
+          dateOfBirth: existingData.dateOfBirth,
+          gender: existingData.gender,
+          bio: existingData.bio,
+          phone: existingData.phone,
+          website: existingData.website,
+          streetAddress: existingData.streetAddress,
+          city: existingData.city,
+          stateRegion: existingData.stateRegion,
+          postalCode: existingData.postalCode,
+          country: existingData.country,
+          location: existingData.location,
+          timezone: existingData.timezone,
+          preferredLanguage: existingData.preferredLanguage,
+          occupation: existingData.occupation,
+          company: existingData.company,
+          emergencyContactName: existingData.emergencyContactName,
+          emergencyContactPhone: existingData.emergencyContactPhone,
+          photoURL: existingData.photoURL,
+          primaryPlatform: existingData.primaryPlatform,
+          linkedProviders: effectiveProviders,
+          tags: existingData.tags,
+          securityPreferences: existingData.securityPreferences,
+          notificationPreferences: existingData.notificationPreferences,
           updatedAt: serverTimestamp(),
-        });
+        };
+
+        if (!hasValidUid) {
+          updatePayload.uid = user.uid;
+        }
+        if (!hasValidCreatedAt) {
+          updatePayload.createdAt = serverTimestamp();
+        }
+        for (const extraKey of extraTopKeys) {
+          updatePayload[extraKey] = deleteField();
+        }
+
+        await updateDoc(userRef, updatePayload);
       } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, userPath);
+        handleFirestoreError(
+          error,
+          OperationType.UPDATE,
+          userPath,
+          `caller=ensureUserProfileProvisioned missingTop=${missingTopKey} missingSec=${missingSecKey} missingNotif=${missingNotifKey} extraTop=${extraTopKeys.join(',')} hasValidCreatedAt=${hasValidCreatedAt} hasValidUid=${hasValidUid} needsSanitization=${needsSanitization}`
+        );
       }
     }
-    return existingData;
+    return {
+      ...existingData,
+      linkedProviders: effectiveProviders,
+    };
   }
 
+  const rawDisplay = sanitizeString(user.displayName, BLUEPRINT_LIMITS.MAX_DISPLAY_NAME);
+  const nameParts = rawDisplay ? rawDisplay.split(/\s+/) : [];
+  const firstName = sanitizeString(nameParts[0] || '', BLUEPRINT_LIMITS.MAX_FIRST_NAME);
+  const lastName = sanitizeString(
+    nameParts.length > 1 ? nameParts.slice(1).join(' ') : '',
+    BLUEPRINT_LIMITS.MAX_LAST_NAME
+  );
+
   const displayName =
-    sanitizeString(user.displayName, BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) ||
-    sanitizeString(email.split('@')[0], BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) ||
-    'System One Member';
+    rawDisplay || sanitizeString(email.split('@')[0], BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) || 'Member';
 
   const newProfile: UserProfile = {
     uid: user.uid,
     email,
+    secondaryEmail: '',
+    firstName,
+    lastName,
     displayName,
     handle: sanitizeHandle(email, displayName),
-    bio: 'Unified System One identity across web, mobile, and desktop workspaces.',
+    dateOfBirth: '',
+    gender: '',
+    bio: '',
     phone: '',
+    website: '',
+    streetAddress: '',
+    city: '',
+    stateRegion: '',
+    postalCode: '',
+    country: '',
     location: '',
+    timezone: detectBrowserTimezone(),
+    preferredLanguage: 'English',
+    occupation: '',
+    company: '',
+    emergencyContactName: '',
+    emergencyContactPhone: '',
     photoURL: sanitizeString(user.photoURL, BLUEPRINT_LIMITS.MAX_PHOTO_URL),
     primaryPlatform: preferredPlatform,
-    linkedProviders: providerIds.length > 0 ? providerIds : ['password'],
-    tags: ['Core Identity', 'SSO Enabled'],
+    linkedProviders: effectiveProviders,
+    tags: [],
     securityPreferences: {
       twoFactorNotice: true,
       loginAlerts: true,
@@ -139,6 +385,10 @@ export async function ensureUserProfileProvisioned(
       securityDigest: true,
       newDeviceAlert: true,
       appAuthorizationAlert: true,
+      profileUpdateAlert: true,
+      webEnabled: true,
+      mobileEnabled: true,
+      desktopEnabled: true,
     },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -150,156 +400,157 @@ export async function ensureUserProfileProvisioned(
     handleFirestoreError(error, OperationType.CREATE, userPath);
   }
 
-  // Seed default tags, starter connected apps, and initial verified audit event atomically
+  // Record the real account creation event and welcome notification (zero dummy apps or dummy tags)
   try {
     const batch = writeBatch(db);
-    const defaultTags: Array<{ id: string; label: string; description: string; tone: TagTone }> = [
-      {
-        id: 'tag_core_identity',
-        label: 'Core Identity',
-        description: 'Primary account resources and universal sign-on credentials',
-        tone: 'sky',
-      },
-      {
-        id: 'tag_mobile_suite',
-        label: 'Mobile Suite',
-        description: 'iOS and Android client applications using deep-link redirect_to',
-        tone: 'emerald',
-      },
-      {
-        id: 'tag_desktop_tools',
-        label: 'Desktop Tools',
-        description: 'Native macOS, Windows, and Linux desktop utilities',
-        tone: 'indigo',
-      },
-      {
-        id: 'tag_security_audit',
-        label: 'Security Audit',
-        description: 'Sensitive configuration changes and sign-in verifications',
-        tone: 'amber',
-      },
-    ];
-
-    for (const tag of defaultTags) {
-      batch.set(doc(db, 'users', user.uid, 'tags', tag.id), {
-        id: tag.id,
-        ownerId: user.uid,
-        label: tag.label,
-        description: tag.description,
-        tone: tag.tone,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-
     const origin =
       typeof window !== 'undefined' ? window.location.origin : 'https://systems-0ne.web.app';
-
-    const starterApps: Array<Omit<ConnectedApp, 'createdAt' | 'updatedAt'>> = [
-      {
-        id: 'app_atlas_web',
-        ownerId: user.uid,
-        name: 'Atlas Web Workspace',
-        platform: 'web',
-        description: 'Primary browser workspace utilizing System One SSO and return redirect_to.',
-        redirectUri: `${origin}/?workspace=atlas`,
-        status: 'active',
-        tags: ['Core Identity'],
-        scopes: ['profile:read', 'email:read', 'prefs:sync'],
-        lastPlatformSource: 'web',
-      },
-      {
-        id: 'app_pulse_mobile',
-        ownerId: user.uid,
-        name: 'Pulse Mobile Companion',
-        platform: 'mobile',
-        description: 'iOS & Android companion app with custom scheme callback continuity.',
-        redirectUri: 'systemone-pulse://auth/callback',
-        status: 'active',
-        tags: ['Mobile Suite', 'Core Identity'],
-        scopes: ['profile:read', 'session:persist'],
-        lastPlatformSource: 'mobile',
-      },
-      {
-        id: 'app_studio_desktop',
-        ownerId: user.uid,
-        name: 'Studio Desktop Client',
-        platform: 'desktop',
-        description: 'Cross-platform desktop client synchronized with unified security policies.',
-        redirectUri: 'systemone-desktop://sso/complete',
-        status: 'active',
-        tags: ['Desktop Tools'],
-        scopes: ['profile:read', 'security:read'],
-        lastPlatformSource: 'desktop',
-      },
-    ];
-
-    for (const appItem of starterApps) {
-      batch.set(doc(db, 'users', user.uid, 'connectedApps', appItem.id), {
-        ...appItem,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
 
     const welcomeEventId = makeSafeId('evt');
     batch.set(doc(db, 'users', user.uid, 'securityEvents', welcomeEventId), {
       id: welcomeEventId,
       ownerId: user.uid,
-      title: 'Unified System One profile initialized',
+      title: 'System One account created',
       category: 'auth' as EventCategory,
       platform: preferredPlatform,
-      provider: providerIds[0] || 'password',
+      provider: effectiveProviders[0] || 'password',
       targetUrl: origin,
-      tags: ['Core Identity', 'Security Audit'],
+      tags: [],
       status: 'verified' as EventStatus,
       createdAt: serverTimestamp(),
     });
 
+    const welcomeNotifId = makeSafeId('notif');
+    batch.set(doc(db, 'users', user.uid, 'notifications', welcomeNotifId), {
+      id: welcomeNotifId,
+      ownerId: user.uid,
+      title: 'Welcome to System One',
+      message:
+        'Your account is ready. Complete your person check and fill out your profile details so all your apps stay in sync.',
+      category: 'account' as NotificationCategory,
+      sourcePlatform: preferredPlatform,
+      targetPlatforms: ['web', 'mobile', 'desktop'],
+      read: false,
+      readAt: '',
+      actionUrl: '',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
     await batch.commit();
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/starter_seed`);
+    handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/initial_records`);
   }
 
   return newProfile;
 }
 
-export function normalizeUserProfile(raw: Partial<UserProfile>): UserProfile {
+export function normalizeUserProfile(
+  raw: Partial<UserProfile>,
+  authUser?: User | null
+): UserProfile {
   const sp = raw.securityPreferences;
-  const email = raw.email ?? '';
+  const np = raw.notificationPreferences;
+  const email = sanitizeString(raw.email ?? authUser?.email ?? '', BLUEPRINT_LIMITS.MAX_EMAIL);
+
+  const rawSecEmail = sanitizeString(raw.secondaryEmail, BLUEPRINT_LIMITS.MAX_EMAIL);
+  const secondaryEmail =
+    rawSecEmail && BLUEPRINT_LIMITS.EMAIL_REGEX.test(rawSecEmail) ? rawSecEmail : '';
+
+  const rawRecEmail = sanitizeString(sp?.passwordRecoveryEmail, BLUEPRINT_LIMITS.MAX_EMAIL);
+  const passwordRecoveryEmail =
+    rawRecEmail && BLUEPRINT_LIMITS.EMAIL_REGEX.test(rawRecEmail) ? rawRecEmail : email;
+
+  const validPlatform: PlatformType =
+    raw.primaryPlatform === 'web' ||
+    raw.primaryPlatform === 'mobile' ||
+    raw.primaryPlatform === 'desktop'
+      ? raw.primaryPlatform
+      : 'web';
+
+  const validTimeout: SecurityPreferences['sessionTimeoutMinutes'] =
+    sp?.sessionTimeoutMinutes === 15 ||
+    sp?.sessionTimeoutMinutes === 30 ||
+    sp?.sessionTimeoutMinutes === 60 ||
+    sp?.sessionTimeoutMinutes === 240 ||
+    sp?.sessionTimeoutMinutes === 1440
+      ? sp.sessionTimeoutMinutes
+      : 60;
+
+  const displayName =
+    sanitizeString(raw.displayName, BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) ||
+    sanitizeString(authUser?.displayName, BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) ||
+    sanitizeString(email.split('@')[0], BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) ||
+    'Member';
+
+  const rawHandle = (typeof raw.handle === 'string' ? raw.handle : '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, '')
+    .slice(0, BLUEPRINT_LIMITS.MAX_HANDLE);
+
   return {
-    uid: raw.uid ?? '',
+    uid: sanitizeString(raw.uid ?? authUser?.uid ?? '', 128),
     email,
-    displayName: raw.displayName ?? 'System One Member',
-    handle: raw.handle ?? '',
-    bio: raw.bio ?? '',
-    phone: raw.phone ?? '',
-    location: raw.location ?? '',
-    photoURL: raw.photoURL ?? '',
-    primaryPlatform: raw.primaryPlatform ?? 'web',
-    linkedProviders: raw.linkedProviders ?? ['password'],
-    tags: raw.tags ?? [],
+    secondaryEmail,
+    firstName: sanitizeString(raw.firstName, BLUEPRINT_LIMITS.MAX_FIRST_NAME),
+    lastName: sanitizeString(raw.lastName, BLUEPRINT_LIMITS.MAX_LAST_NAME),
+    displayName,
+    handle: rawHandle,
+    dateOfBirth: sanitizeString(raw.dateOfBirth, BLUEPRINT_LIMITS.MAX_DOB),
+    gender: sanitizeString(raw.gender, BLUEPRINT_LIMITS.MAX_GENDER),
+    bio: sanitizeString(raw.bio, BLUEPRINT_LIMITS.MAX_BIO),
+    phone: sanitizeString(raw.phone, BLUEPRINT_LIMITS.MAX_PHONE),
+    website: sanitizeString(raw.website, BLUEPRINT_LIMITS.MAX_WEBSITE),
+    streetAddress: sanitizeString(raw.streetAddress, BLUEPRINT_LIMITS.MAX_STREET),
+    city: sanitizeString(raw.city, BLUEPRINT_LIMITS.MAX_CITY),
+    stateRegion: sanitizeString(raw.stateRegion, BLUEPRINT_LIMITS.MAX_STATE),
+    postalCode: sanitizeString(raw.postalCode, BLUEPRINT_LIMITS.MAX_POSTAL),
+    country: sanitizeString(raw.country, BLUEPRINT_LIMITS.MAX_COUNTRY),
+    location: sanitizeString(raw.location, BLUEPRINT_LIMITS.MAX_LOCATION),
+    timezone: sanitizeString(raw.timezone, BLUEPRINT_LIMITS.MAX_TIMEZONE),
+    preferredLanguage:
+      sanitizeString(raw.preferredLanguage, BLUEPRINT_LIMITS.MAX_LANGUAGE) || 'English',
+    occupation: sanitizeString(raw.occupation, BLUEPRINT_LIMITS.MAX_OCCUPATION),
+    company: sanitizeString(raw.company, BLUEPRINT_LIMITS.MAX_COMPANY),
+    emergencyContactName: sanitizeString(
+      raw.emergencyContactName,
+      BLUEPRINT_LIMITS.MAX_EMERGENCY_NAME
+    ),
+    emergencyContactPhone: sanitizeString(raw.emergencyContactPhone, BLUEPRINT_LIMITS.MAX_PHONE),
+    photoURL: sanitizeString(raw.photoURL ?? authUser?.photoURL ?? '', BLUEPRINT_LIMITS.MAX_PHOTO_URL),
+    primaryPlatform: validPlatform,
+    linkedProviders: sanitizeTagArray(
+      Array.isArray(raw.linkedProviders) && raw.linkedProviders.length > 0
+        ? raw.linkedProviders
+        : ['password'],
+      5
+    ),
+    tags: sanitizeTagArray(Array.isArray(raw.tags) ? raw.tags : [], BLUEPRINT_LIMITS.MAX_PROFILE_TAGS),
     securityPreferences: {
-      twoFactorNotice: sp?.twoFactorNotice ?? true,
-      loginAlerts: sp?.loginAlerts ?? true,
-      sessionTimeoutMinutes: sp?.sessionTimeoutMinutes ?? 60,
-      requireReauthForSensitive: sp?.requireReauthForSensitive ?? true,
-      trustedRedirectOnly: sp?.trustedRedirectOnly ?? true,
-      passwordRecoveryEmail: sp?.passwordRecoveryEmail ?? email,
-      humanVerified: sp?.humanVerified ?? true,
-      humanVerifiedAt: sp?.humanVerifiedAt ?? '',
-      biometricsEnabled: sp?.biometricsEnabled ?? false,
-      pinConfigured: sp?.pinConfigured ?? false,
-      pinHash: sp?.pinHash ?? '',
-      pinUpdatedAt: sp?.pinUpdatedAt ?? '',
-      pinExpiresAt: sp?.pinExpiresAt ?? '',
-      authenticatorEnabled: sp?.authenticatorEnabled ?? false,
-      authenticatorSecret: sp?.authenticatorSecret ?? '',
+      twoFactorNotice: Boolean(sp?.twoFactorNotice ?? true),
+      loginAlerts: Boolean(sp?.loginAlerts ?? true),
+      sessionTimeoutMinutes: validTimeout,
+      requireReauthForSensitive: Boolean(sp?.requireReauthForSensitive ?? true),
+      trustedRedirectOnly: Boolean(sp?.trustedRedirectOnly ?? true),
+      passwordRecoveryEmail,
+      humanVerified: Boolean(sp?.humanVerified ?? false),
+      humanVerifiedAt: sanitizeString(sp?.humanVerifiedAt, 40),
+      biometricsEnabled: Boolean(sp?.biometricsEnabled ?? false),
+      pinConfigured: Boolean(sp?.pinConfigured ?? false),
+      pinHash: sanitizeString(sp?.pinHash, 128),
+      pinUpdatedAt: sanitizeString(sp?.pinUpdatedAt, 40),
+      pinExpiresAt: sanitizeString(sp?.pinExpiresAt, 40),
+      authenticatorEnabled: Boolean(sp?.authenticatorEnabled ?? false),
+      authenticatorSecret: sanitizeString(sp?.authenticatorSecret, 64),
     },
     notificationPreferences: {
-      securityDigest: raw.notificationPreferences?.securityDigest ?? true,
-      newDeviceAlert: raw.notificationPreferences?.newDeviceAlert ?? true,
-      appAuthorizationAlert: raw.notificationPreferences?.appAuthorizationAlert ?? true,
+      securityDigest: Boolean(np?.securityDigest ?? true),
+      newDeviceAlert: Boolean(np?.newDeviceAlert ?? true),
+      appAuthorizationAlert: Boolean(np?.appAuthorizationAlert ?? true),
+      profileUpdateAlert: Boolean(np?.profileUpdateAlert ?? true),
+      webEnabled: Boolean(np?.webEnabled ?? true),
+      mobileEnabled: Boolean(np?.mobileEnabled ?? true),
+      desktopEnabled: Boolean(np?.desktopEnabled ?? true),
     },
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
@@ -385,34 +636,120 @@ export function subscribeToAccountTags(
   );
 }
 
+export function subscribeToNotifications(
+  uid: string,
+  onData: (notifications: AccountNotification[]) => void
+): () => void {
+  const path = `users/${uid}/notifications`;
+  const q = query(
+    collection(db, 'users', uid, 'notifications'),
+    where('ownerId', '==', uid),
+    orderBy('createdAt', 'desc')
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(snap.docs.map((d) => d.data() as AccountNotification));
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
 export async function updateProfileDetails(
   uid: string,
   updates: {
+    secondaryEmail: string;
+    firstName: string;
+    lastName: string;
     displayName: string;
     handle: string;
+    dateOfBirth: string;
+    gender: string;
     bio: string;
     phone: string;
+    website: string;
+    streetAddress: string;
+    city: string;
+    stateRegion: string;
+    postalCode: string;
+    country: string;
     location: string;
+    timezone: string;
+    preferredLanguage: string;
+    occupation: string;
+    company: string;
+    emergencyContactName: string;
+    emergencyContactPhone: string;
     photoURL: string;
     primaryPlatform: PlatformType;
     tags: string[];
   }
 ): Promise<void> {
   const path = `users/${uid}`;
+  const cleanSecondaryEmail = sanitizeString(
+    updates.secondaryEmail,
+    BLUEPRINT_LIMITS.MAX_EMAIL
+  );
+  if (cleanSecondaryEmail && !BLUEPRINT_LIMITS.EMAIL_REGEX.test(cleanSecondaryEmail)) {
+    throw new Error('Please enter a valid backup email address or leave it blank.');
+  }
+
   const cleanHandle = updates.handle
     .toLowerCase()
     .replace(/[^a-z0-9_.-]/g, '')
     .slice(0, BLUEPRINT_LIMITS.MAX_HANDLE);
 
+  const cityClean = sanitizeString(updates.city, BLUEPRINT_LIMITS.MAX_CITY);
+  const countryClean = sanitizeString(updates.country, BLUEPRINT_LIMITS.MAX_COUNTRY);
+  const derivedLocation =
+    sanitizeString(updates.location, BLUEPRINT_LIMITS.MAX_LOCATION) ||
+    [cityClean, countryClean].filter(Boolean).join(', ').slice(0, BLUEPRINT_LIMITS.MAX_LOCATION);
+
+  const firstClean = sanitizeString(updates.firstName, BLUEPRINT_LIMITS.MAX_FIRST_NAME);
+  const lastClean = sanitizeString(updates.lastName, BLUEPRINT_LIMITS.MAX_LAST_NAME);
+  const fullNameFallback = `${firstClean} ${lastClean}`.trim();
+
   const payload = {
+    secondaryEmail: cleanSecondaryEmail,
+    firstName: firstClean,
+    lastName: lastClean,
     displayName:
-      sanitizeString(updates.displayName, BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) || 'Member',
+      sanitizeString(updates.displayName, BLUEPRINT_LIMITS.MAX_DISPLAY_NAME) ||
+      fullNameFallback ||
+      'Member',
     handle: cleanHandle,
+    dateOfBirth: sanitizeString(updates.dateOfBirth, BLUEPRINT_LIMITS.MAX_DOB),
+    gender: sanitizeString(updates.gender, BLUEPRINT_LIMITS.MAX_GENDER),
     bio: sanitizeString(updates.bio, BLUEPRINT_LIMITS.MAX_BIO),
     phone: sanitizeString(updates.phone, BLUEPRINT_LIMITS.MAX_PHONE),
-    location: sanitizeString(updates.location, BLUEPRINT_LIMITS.MAX_LOCATION),
+    website: sanitizeString(updates.website, BLUEPRINT_LIMITS.MAX_WEBSITE),
+    streetAddress: sanitizeString(updates.streetAddress, BLUEPRINT_LIMITS.MAX_STREET),
+    city: cityClean,
+    stateRegion: sanitizeString(updates.stateRegion, BLUEPRINT_LIMITS.MAX_STATE),
+    postalCode: sanitizeString(updates.postalCode, BLUEPRINT_LIMITS.MAX_POSTAL),
+    country: countryClean,
+    location: derivedLocation,
+    timezone: sanitizeString(updates.timezone, BLUEPRINT_LIMITS.MAX_TIMEZONE),
+    preferredLanguage: sanitizeString(updates.preferredLanguage, BLUEPRINT_LIMITS.MAX_LANGUAGE),
+    occupation: sanitizeString(updates.occupation, BLUEPRINT_LIMITS.MAX_OCCUPATION),
+    company: sanitizeString(updates.company, BLUEPRINT_LIMITS.MAX_COMPANY),
+    emergencyContactName: sanitizeString(
+      updates.emergencyContactName,
+      BLUEPRINT_LIMITS.MAX_EMERGENCY_NAME
+    ),
+    emergencyContactPhone: sanitizeString(
+      updates.emergencyContactPhone,
+      BLUEPRINT_LIMITS.MAX_PHONE
+    ),
     photoURL: sanitizeString(updates.photoURL, BLUEPRINT_LIMITS.MAX_PHOTO_URL),
-    primaryPlatform: updates.primaryPlatform,
+    primaryPlatform:
+      updates.primaryPlatform === 'web' ||
+      updates.primaryPlatform === 'mobile' ||
+      updates.primaryPlatform === 'desktop'
+        ? updates.primaryPlatform
+        : 'web',
     tags: sanitizeTagArray(updates.tags, BLUEPRINT_LIMITS.MAX_PROFILE_TAGS),
     updatedAt: serverTimestamp(),
   };
@@ -420,7 +757,7 @@ export async function updateProfileDetails(
   try {
     await updateDoc(doc(db, 'users', uid), payload);
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    handleFirestoreError(error, OperationType.UPDATE, path, 'caller=updateProfileDetails');
   }
 }
 
@@ -437,12 +774,21 @@ export async function updateSecurityPreferences(
     throw new Error('Please enter a valid backup recovery email address.');
   }
 
+  const validTimeout: SecurityPreferences['sessionTimeoutMinutes'] =
+    prefs.sessionTimeoutMinutes === 15 ||
+    prefs.sessionTimeoutMinutes === 30 ||
+    prefs.sessionTimeoutMinutes === 60 ||
+    prefs.sessionTimeoutMinutes === 240 ||
+    prefs.sessionTimeoutMinutes === 1440
+      ? prefs.sessionTimeoutMinutes
+      : 60;
+
   try {
     await updateDoc(doc(db, 'users', uid), {
       securityPreferences: {
         twoFactorNotice: Boolean(prefs.twoFactorNotice),
         loginAlerts: Boolean(prefs.loginAlerts),
-        sessionTimeoutMinutes: prefs.sessionTimeoutMinutes,
+        sessionTimeoutMinutes: validTimeout,
         requireReauthForSensitive: Boolean(prefs.requireReauthForSensitive),
         trustedRedirectOnly: Boolean(prefs.trustedRedirectOnly),
         passwordRecoveryEmail: recoveryEmail,
@@ -459,7 +805,7 @@ export async function updateSecurityPreferences(
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    handleFirestoreError(error, OperationType.UPDATE, path, 'caller=updateSecurityPreferences');
   }
 }
 
@@ -474,11 +820,145 @@ export async function updateNotificationPreferences(
         securityDigest: Boolean(prefs.securityDigest),
         newDeviceAlert: Boolean(prefs.newDeviceAlert),
         appAuthorizationAlert: Boolean(prefs.appAuthorizationAlert),
+        profileUpdateAlert: Boolean(prefs.profileUpdateAlert),
+        webEnabled: Boolean(prefs.webEnabled),
+        mobileEnabled: Boolean(prefs.mobileEnabled),
+        desktopEnabled: Boolean(prefs.desktopEnabled),
       },
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path, 'caller=updateNotificationPreferences');
+  }
+}
+
+export function resolveEnabledTargetPlatforms(
+  prefs?: NotificationPreferences
+): PlatformType[] {
+  if (!prefs) return ['web', 'mobile', 'desktop'];
+  const list: PlatformType[] = [];
+  if (prefs.webEnabled) list.push('web');
+  if (prefs.mobileEnabled) list.push('mobile');
+  if (prefs.desktopEnabled) list.push('desktop');
+  return list;
+}
+
+export async function createCrossPlatformNotification(
+  uid: string,
+  input: {
+    title: string;
+    message: string;
+    category: NotificationCategory;
+    sourcePlatform: PlatformType;
+    targetPlatforms?: PlatformType[];
+    actionUrl?: string;
+  },
+  prefs?: NotificationPreferences
+): Promise<string | null> {
+  const targets =
+    input.targetPlatforms && input.targetPlatforms.length > 0
+      ? input.targetPlatforms
+      : resolveEnabledTargetPlatforms(prefs);
+
+  if (targets.length === 0) {
+    return null;
+  }
+
+  const notifId = makeSafeId('notif');
+  const path = `users/${uid}/notifications/${notifId}`;
+  const title = sanitizeString(input.title, BLUEPRINT_LIMITS.MAX_NOTIF_TITLE);
+  const message = sanitizeString(input.message, BLUEPRINT_LIMITS.MAX_NOTIF_MESSAGE);
+
+  if (!title || !message) {
+    throw new Error('Notification title and message are required.');
+  }
+
+  const docData: AccountNotification = {
+    id: notifId,
+    ownerId: uid,
+    title,
+    message,
+    category: input.category,
+    sourcePlatform: input.sourcePlatform,
+    targetPlatforms: Array.from(new Set(targets)).slice(0, 3),
+    read: false,
+    readAt: '',
+    actionUrl: sanitizeString(input.actionUrl, BLUEPRINT_LIMITS.MAX_REDIRECT_URI),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    await setDoc(doc(db, 'users', uid, 'notifications', notifId), docData);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+
+  // Trigger native browser notification if user opted in and Web delivery is enabled
+  if (
+    typeof window !== 'undefined' &&
+    'Notification' in window &&
+    Notification.permission === 'granted' &&
+    docData.targetPlatforms.includes('web')
+  ) {
+    try {
+      new Notification(title, { body: message });
+    } catch {
+      // Ignore environments restricting Notification constructor
+    }
+  }
+
+  return notifId;
+}
+
+export async function markNotificationRead(
+  uid: string,
+  notificationId: string,
+  read: boolean
+): Promise<void> {
+  const path = `users/${uid}/notifications/${notificationId}`;
+  try {
+    await updateDoc(doc(db, 'users', uid, 'notifications', notificationId), {
+      read,
+      readAt: read ? new Date().toISOString() : '',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function markAllNotificationsRead(
+  uid: string,
+  notifications: AccountNotification[]
+): Promise<void> {
+  const unread = notifications.filter((n) => !n.read);
+  if (unread.length === 0) return;
+  const nowIso = new Date().toISOString();
+  const batch = writeBatch(db);
+  for (const item of unread) {
+    batch.update(doc(db, 'users', uid, 'notifications', item.id), {
+      read: true,
+      readAt: nowIso,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `users/${uid}/notifications`);
+  }
+}
+
+export async function deleteNotification(
+  uid: string,
+  notificationId: string
+): Promise<void> {
+  const path = `users/${uid}/notifications/${notificationId}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'notifications', notificationId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 

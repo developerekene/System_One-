@@ -1,9 +1,10 @@
 import { ExternalLink, Lock } from 'lucide-react';
+import { WorkspaceTab } from '../types/systemOne';
 import { SystemOneLogo } from './SystemOneLogo';
 
 interface FooterProps {
   isAuthenticated: boolean;
-  onNavigateWorkspace?: (tab: 'overview' | 'apps' | 'security' | 'tags') => void;
+  onNavigateWorkspace?: (tab: WorkspaceTab) => void;
   onSelectAuthMode?: (mode: 'signin' | 'signup' | 'reset') => void;
   onSignOut?: () => void;
 }
@@ -53,7 +54,16 @@ export function Footer({
                       onClick={() => onNavigateWorkspace('overview')}
                       className="hover:text-sky-700 transition-colors"
                     >
-                      Profile & Overview
+                      My Profile
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateWorkspace('notifications')}
+                      className="hover:text-sky-700 transition-colors"
+                    >
+                      Notifications
                     </button>
                   </li>
                   <li>

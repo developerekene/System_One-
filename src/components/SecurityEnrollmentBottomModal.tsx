@@ -10,7 +10,11 @@ import {
   X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { logSecurityEvent, updateSecurityPreferences } from '../lib/firestoreService';
+import {
+  createCrossPlatformNotification,
+  logSecurityEvent,
+  updateSecurityPreferences,
+} from '../lib/firestoreService';
 import {
   attemptPlatformBiometricEnrollment,
   buildPinRotationDates,
@@ -59,20 +63,31 @@ export function SecurityEnrollmentBottomModal({
       });
 
       await logSecurityEvent(authUser.uid, {
-        title: `Mobile biometrics login activated (${result.method})`,
+        title: `Mobile fingerprint / face unlock activated (${result.method})`,
         category: 'security',
         platform: 'mobile',
         provider: result.method,
         targetUrl: window.location.origin,
-        tags: ['Security Audit', 'Mobile Suite'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
 
-      onCompleted('Biometrics login activated for your mobile device.');
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: 'Mobile unlock active',
+          message: 'Fingerprint or face login is now turned on for your mobile device.',
+          category: 'security',
+          sourcePlatform: 'mobile',
+        },
+        profile.notificationPreferences
+      );
+
+      onCompleted('Fingerprint / face login is now turned on for your phone.');
       onClose();
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Unable to activate biometrics login.'
+        err instanceof Error ? err.message : 'Unable to turn on biometrics login.'
       );
     } finally {
       setBusy(false);
@@ -87,17 +102,17 @@ export function SecurityEnrollmentBottomModal({
     const cleanConfirm = confirmPin.trim();
 
     if (!/^\d{6}$/.test(cleanPin)) {
-      setErrorMsg('Please enter an exact 6-digit numeric PIN (0–9).');
+      setErrorMsg('Please enter 6 numbers (0–9).');
       return;
     }
 
     if (cleanPin !== cleanConfirm) {
-      setErrorMsg('PIN confirmation does not match. Please re-enter both fields.');
+      setErrorMsg('The two PINs do not match. Please enter both again.');
       return;
     }
 
     if (/^(\d)\1{5}$/.test(cleanPin) || cleanPin === '123456' || cleanPin === '654321') {
-      setErrorMsg('Please choose a stronger 6-digit PIN without repeated or sequential digits.');
+      setErrorMsg('Please pick a stronger 6-digit PIN without repeated or simple sequences.');
       return;
     }
 
@@ -116,25 +131,36 @@ export function SecurityEnrollmentBottomModal({
 
       await logSecurityEvent(authUser.uid, {
         title: isPinRotationRenewal
-          ? '6-digit security PIN rotated (90-day cycle)'
-          : '6-digit security PIN activated (90-day rotation policy)',
+          ? '6-digit security PIN updated (90-day cycle)'
+          : '6-digit security PIN set up (90-day change policy)',
         category: 'security',
         platform: profile.primaryPlatform === 'mobile' ? 'desktop' : profile.primaryPlatform,
         provider: 'pin_6_digit',
         targetUrl: window.location.origin,
-        tags: ['Security Audit', 'Core Identity'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
+
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: '6-digit PIN updated',
+          message: `Your 6-digit PIN is saved. Remember to change it again in ${PIN_ROTATION_DAYS} days.`,
+          category: 'security',
+          sourcePlatform: profile.primaryPlatform === 'mobile' ? 'desktop' : profile.primaryPlatform,
+        },
+        profile.notificationPreferences
+      );
 
       setPin('');
       setConfirmPin('');
       onCompleted(
-        `6-digit PIN activated. Next mandatory rotation in ${PIN_ROTATION_DAYS} days.`
+        `Your 6-digit PIN is active. Next change due in ${PIN_ROTATION_DAYS} days.`
       );
       onClose();
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Unable to activate 6-digit security PIN.'
+        err instanceof Error ? err.message : 'Unable to save your 6-digit PIN.'
       );
     } finally {
       setBusy(false);
@@ -150,7 +176,6 @@ export function SecurityEnrollmentBottomModal({
           aria-labelledby="security-bottom-modal-title"
           className="fixed inset-0 z-50 flex items-end justify-center"
         >
-          {/* Backdrop Scrim */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -160,7 +185,6 @@ export function SecurityEnrollmentBottomModal({
             className="fixed inset-0 bg-slate-900/35 backdrop-blur-[2px]"
           />
 
-          {/* Bottom-Sheet Drawer */}
           <motion.div
             initial={{ y: '100%', opacity: 0.9 }}
             animate={{ y: 0, opacity: 1 }}
@@ -182,12 +206,12 @@ export function SecurityEnrollmentBottomModal({
                     {isMobile ? (
                       <>
                         <Smartphone className="w-3.5 h-3.5" />
-                        <span>Mobile Device Detected</span>
+                        <span>Mobile Device</span>
                       </>
                     ) : (
                       <>
                         <Monitor className="w-3.5 h-3.5" />
-                        <span>Desktop / Web Browser Detected</span>
+                        <span>Desktop / Web Device</span>
                       </>
                     )}
                   </div>
@@ -196,17 +220,17 @@ export function SecurityEnrollmentBottomModal({
                     className="text-lg font-bold text-slate-900 mt-0.5"
                   >
                     {isMobile
-                      ? 'Activate Biometrics Login'
+                      ? 'Turn On Fingerprint / Face Unlock'
                       : isPinRotationRenewal
-                        ? 'Rotate Your 6-Digit Security PIN'
-                        : 'Activate 6-Digit Security PIN'}
+                        ? 'Update Your 6-Digit PIN'
+                        : 'Set Up Your 6-Digit PIN'}
                   </h2>
                 </div>
               </div>
 
               <button
                 type="button"
-                aria-label="Close security activation modal"
+                aria-label="Close security modal"
                 onClick={onClose}
                 className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
               >
@@ -226,16 +250,14 @@ export function SecurityEnrollmentBottomModal({
             {isMobile ? (
               <div className="mt-5 space-y-5">
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  You are signing in from a mobile device. Enable Face ID, Touch ID, or device
-                  biometrics to unlock System One and authorize connected mobile apps quickly
-                  without re-typing your password.
+                  You are on a mobile phone. Turn on fingerprint or face unlock so you can sign
+                  into your apps quickly without typing your password every time.
                 </p>
 
                 <div className="p-4 rounded-xl bg-sky-50/70 border border-sky-200/80 flex items-start gap-3">
                   <ShieldCheck className="w-5 h-5 text-sky-700 shrink-0 mt-0.5" />
                   <div className="text-xs text-slate-700 leading-relaxed">
-                    Biometric credentials stay on your mobile hardware enclave. System One stores
-                    only your verified enrollment state.
+                    Your fingerprint or face scan never leaves your phone.
                   </div>
                 </div>
 
@@ -247,7 +269,7 @@ export function SecurityEnrollmentBottomModal({
                     className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-xl transition-colors"
                   >
                     <Fingerprint className="w-4 h-4" />
-                    <span>{busy ? 'Activating...' : 'Activate Biometrics Login'}</span>
+                    <span>{busy ? 'Turning on...' : 'Turn On Biometrics'}</span>
                   </button>
                   <button
                     type="button"
@@ -261,9 +283,9 @@ export function SecurityEnrollmentBottomModal({
             ) : (
               <form onSubmit={handleActivatePin} className="mt-5 space-y-4">
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Because you are on a desktop or web device, System One requires a{' '}
-                  <strong className="text-slate-900">6-digit security PIN</strong>. For ongoing
-                  account protection, this PIN must be changed every{' '}
+                  On desktop and web browsers, choose a{' '}
+                  <strong className="text-slate-900">6-digit PIN</strong> to keep your account extra
+                  safe. You will be asked to change this PIN every{' '}
                   <strong className="text-slate-900">3 months (90 days)</strong>.
                 </p>
 
@@ -273,7 +295,7 @@ export function SecurityEnrollmentBottomModal({
                       htmlFor="pin-input"
                       className="block text-sm font-medium text-slate-800 mb-1.5"
                     >
-                      6-Digit PIN
+                      Enter 6-Digit PIN
                     </label>
                     <input
                       id="pin-input"
@@ -318,7 +340,7 @@ export function SecurityEnrollmentBottomModal({
                 <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center gap-2.5 text-xs text-slate-700">
                   <CheckCircle2 className="w-4 h-4 text-sky-700 shrink-0" />
                   <span>
-                    Hashed with SHA-256 before storage · Mandatory 90-day (3-month) rotation cycle
+                    Safely encrypted before saving · Must be changed every 90 days (3 months)
                   </span>
                 </div>
 
@@ -334,7 +356,7 @@ export function SecurityEnrollmentBottomModal({
                         ? 'Saving PIN...'
                         : isPinRotationRenewal
                           ? 'Update 6-Digit PIN'
-                          : 'Activate 6-Digit PIN'}
+                          : 'Save 6-Digit PIN'}
                     </span>
                   </button>
                   <button
@@ -342,7 +364,7 @@ export function SecurityEnrollmentBottomModal({
                     onClick={onClose}
                     className="px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
                   >
-                    Dismiss
+                    Later
                   </button>
                 </div>
               </form>

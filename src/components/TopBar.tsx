@@ -6,26 +6,35 @@ import { SystemOneLogo } from './SystemOneLogo';
 interface TopBarProps {
   activeTab: WorkspaceTab;
   onSelectTab: (tab: WorkspaceTab) => void;
+  unreadNotifications?: number;
   redirectContext: RedirectContext | null;
   onReturnToRedirect: () => void;
   onSignOut: () => void;
 }
 
-const NAV_ITEMS: Array<{ id: WorkspaceTab; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'apps', label: 'Connected Apps' },
-  { id: 'security', label: 'Security' },
-  { id: 'tags', label: 'Tags' },
-];
-
 export function TopBar({
   activeTab,
   onSelectTab,
+  unreadNotifications = 0,
   redirectContext,
   onReturnToRedirect,
   onSignOut,
 }: TopBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navItems: Array<{ id: WorkspaceTab; label: string }> = [
+    { id: 'overview', label: 'Profile' },
+    {
+      id: 'notifications',
+      label:
+        unreadNotifications > 0
+          ? `Notifications (${unreadNotifications})`
+          : 'Notifications',
+    },
+    { id: 'apps', label: 'Connected Apps' },
+    { id: 'security', label: 'Security' },
+    { id: 'tags', label: 'Tags' },
+  ];
 
   const handleNavClick = (tab: WorkspaceTab) => {
     onSelectTab(tab);
@@ -47,9 +56,9 @@ export function TopBar({
         {/* Zone 2: Concise single-line navigation links */}
         <nav
           aria-label="Primary Navigation"
-          className="hidden md:flex items-center gap-7"
+          className="hidden md:flex items-center gap-6"
         >
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
@@ -111,7 +120,7 @@ export function TopBar({
       {/* Responsive Mobile Navigation Panel */}
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-slate-200 bg-white px-4 py-3 space-y-1">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button

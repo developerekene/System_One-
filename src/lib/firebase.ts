@@ -44,7 +44,8 @@ export async function testFirestoreConnection(): Promise<boolean> {
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
-  path: string | null
+  path: string | null,
+  details?: string
 ): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -62,6 +63,7 @@ export function handleFirestoreError(
     },
     operationType,
     path,
+    ...(details ? { details } : {}),
   };
   console.error('Firestore Error:', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));

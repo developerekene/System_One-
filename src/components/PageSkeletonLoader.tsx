@@ -1,5 +1,5 @@
 interface PageSkeletonLoaderProps {
-  variant: 'overview' | 'apps' | 'security' | 'tags' | 'signup' | 'home';
+  variant: 'overview' | 'notifications' | 'apps' | 'security' | 'tags' | 'signup' | 'home';
   withHeaderShell?: boolean;
 }
 
@@ -61,7 +61,7 @@ export function PageSkeletonLoader({
         </div>
 
         {/* Content cards / list items skeleton */}
-        {variant === 'apps' || variant === 'tags' ? (
+        {variant === 'apps' || variant === 'tags' || variant === 'notifications' ? (
           <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-5">
             {[1, 2, 3].map((item) => (
               <div

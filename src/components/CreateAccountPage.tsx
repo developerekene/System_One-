@@ -308,7 +308,7 @@ export function CreateAccountPage({
                   maxLength={80}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Alex Morgan"
+                  placeholder="Enter your full name"
                   className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
                 />
               </div>

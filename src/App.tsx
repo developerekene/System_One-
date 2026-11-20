@@ -12,6 +12,7 @@ import { ConnectedAppsSection } from './components/ConnectedAppsSection';
 import { CreateAccountPage } from './components/CreateAccountPage';
 import { Footer } from './components/Footer';
 import { LoginChallengeGate } from './components/LoginChallengeGate';
+import { NotificationsSection } from './components/NotificationsSection';
 import { OverviewSection } from './components/OverviewSection';
 import { PageSkeletonLoader } from './components/PageSkeletonLoader';
 import { RedirectHandoffBanner } from './components/RedirectHandoffBanner';
@@ -21,10 +22,12 @@ import { TagsSection } from './components/TagsSection';
 import { TopBar } from './components/TopBar';
 import { auth, testFirestoreConnection } from './lib/firebase';
 import {
+  createCrossPlatformNotification,
   ensureUserProfileProvisioned,
   logSecurityEvent,
   subscribeToAccountTags,
   subscribeToConnectedApps,
+  subscribeToNotifications,
   subscribeToSecurityEvents,
   subscribeToUserProfile,
 } from './lib/firestoreService';
@@ -38,6 +41,7 @@ import {
 } from './lib/redirect';
 import { detectMobileDevice, isPinExpiredOrDue } from './lib/securityEnrollment';
 import {
+  AccountNotification,
   AccountTag,
   ConnectedApp,
   PlatformType,
@@ -80,6 +84,7 @@ export default function App() {
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
+  const [notifications, setNotifications] = useState<AccountNotification[]>([]);
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
   const [accountTags, setAccountTags] = useState<AccountTag[]>([]);
   const [provisioningError, setProvisioningError] = useState<string | null>(null);
@@ -164,6 +169,7 @@ export default function App() {
     if (!authReady || !authUser || !authUser.emailVerified) {
       setProfile(null);
       setConnectedApps([]);
+      setNotifications([]);
       setSecurityEvents([]);
       setAccountTags([]);
       return;
@@ -172,6 +178,7 @@ export default function App() {
     let active = true;
     let unsubProfile: (() => void) | undefined;
     let unsubApps: (() => void) | undefined;
+    let unsubNotifications: (() => void) | undefined;
     let unsubEvents: (() => void) | undefined;
     let unsubTags: (() => void) | undefined;
 
@@ -181,9 +188,10 @@ export default function App() {
         const initialProfile = await ensureUserProfileProvisioned(authUser, selectedPlatform);
         if (!active) return;
 
-        // Direct newly created or not-yet-human-verified users to the profile page
+        // Always navigate authenticated users to their Profile page on sign-in
+        setActiveTab('overview');
+
         if (!initialProfile.securityPreferences.humanVerified) {
-          setActiveTab('overview');
           try {
             sessionStorage.setItem(getSessionVerifiedKey(authUser.uid), 'true');
           } catch {
@@ -194,6 +202,7 @@ export default function App() {
 
         unsubProfile = subscribeToUserProfile(authUser.uid, setProfile);
         unsubApps = subscribeToConnectedApps(authUser.uid, setConnectedApps);
+        unsubNotifications = subscribeToNotifications(authUser.uid, setNotifications);
         unsubEvents = subscribeToSecurityEvents(authUser.uid, setSecurityEvents);
         unsubTags = subscribeToAccountTags(authUser.uid, setAccountTags);
       } catch (err) {
@@ -209,10 +218,11 @@ export default function App() {
       active = false;
       unsubProfile?.();
       unsubApps?.();
+      unsubNotifications?.();
       unsubEvents?.();
       unsubTags?.();
     };
-  }, [authReady, authUser, authUser?.emailVerified, verificationTick, selectedPlatform]);
+  }, [authReady, authUser?.uid, authUser?.emailVerified, verificationTick]);
 
   // Automatically prompt bottom modal if 90-day PIN rotation is overdue for a human-verified desktop/web user
   useEffect(() => {
@@ -254,6 +264,7 @@ export default function App() {
       // Ignore storage error
     }
     setSessionVerifiedForUid(null);
+    setActiveTab('overview');
   };
 
   const handleLoginChallengeVerified = () => {
@@ -264,8 +275,14 @@ export default function App() {
       // Ignore storage error
     }
     setSessionVerifiedForUid(authUser.uid);
+    setActiveTab('overview');
     triggerPageSkeleton();
   };
+
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((item) => !item.read).length,
+    [notifications]
+  );
 
   const isTrustedTarget = useMemo(() => {
     if (!redirectContext) return true;
@@ -278,6 +295,7 @@ export default function App() {
       uid: authUser.uid,
       email: authUser.email,
       displayName: authUser.displayName,
+      unreadNotifications: unreadNotificationCount,
     });
 
     try {
@@ -287,9 +305,22 @@ export default function App() {
         platform: contextToUse.platform,
         provider: 'system_one_sso',
         targetUrl: contextToUse.redirectTo,
-        tags: ['Core Identity'],
+        tags: [],
         status: 'completed',
       });
+      if (profile?.notificationPreferences.newDeviceAlert) {
+        await createCrossPlatformNotification(
+          authUser.uid,
+          {
+            title: `Signed in to ${contextToUse.appName}`,
+            message: `Your account opened ${contextToUse.appName} on ${contextToUse.platform}.`,
+            category: 'app',
+            sourcePlatform: contextToUse.platform,
+            actionUrl: contextToUse.redirectTo,
+          },
+          profile.notificationPreferences
+        );
+      }
     } catch {
       // Proceed with redirect even if logging encounters transient network lag
     }
@@ -318,19 +349,6 @@ export default function App() {
     clearRedirectContext();
     setRedirectContext(null);
     setHandoffNotice(null);
-  };
-
-  const handleSimulateIncomingRedirect = (
-    redirectTo: string,
-    platform: PlatformType,
-    appName: string
-  ) => {
-    const nextCtx = setActiveRedirectContext(redirectTo, platform, appName);
-    if (nextCtx) {
-      setRedirectContext(nextCtx);
-      setHandoffNotice(null);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
   };
 
   const handleLaunchReturnFromApp = async (
@@ -405,6 +423,7 @@ export default function App() {
           <TopBar
             activeTab={activeTab}
             onSelectTab={navigateWorkspaceTab}
+            unreadNotifications={unreadNotificationCount}
             redirectContext={redirectContext}
             onReturnToRedirect={() => redirectContext && executeReturnHandoff(redirectContext)}
             onSignOut={handleSignOut}
@@ -445,6 +464,7 @@ export default function App() {
       <TopBar
         activeTab={activeTab}
         onSelectTab={navigateWorkspaceTab}
+        unreadNotifications={unreadNotificationCount}
         redirectContext={redirectContext}
         onReturnToRedirect={() => redirectContext && executeReturnHandoff(redirectContext)}
         onSignOut={handleSignOut}
@@ -524,10 +544,10 @@ export default function App() {
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="search"
-                aria-label="Search System One apps, tags, and security activity"
+                aria-label="Search System One apps, notifications, labels, and activity"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search connected apps, redirect URIs, security events, or tags..."
+                placeholder="Search your apps, notifications, activity, or labels..."
                 className="w-full pl-10 pr-10 py-2.5 text-sm text-slate-900 bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
               />
               {searchQuery && (
@@ -549,7 +569,7 @@ export default function App() {
                 className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-sky-800 bg-sky-50 border border-sky-200 hover:bg-sky-100 rounded-xl transition-colors whitespace-nowrap shrink-0"
               >
                 <X className="w-3.5 h-3.5" />
-                <span>Clear Tag: {selectedTagFilter}</span>
+                <span>Clear Label: {selectedTagFilter}</span>
               </button>
             )}
           </div>
@@ -558,7 +578,7 @@ export default function App() {
             <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
               <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 shrink-0 mr-1">
                 <TagIcon className="w-3.5 h-3.5" />
-                <span>Tags:</span>
+                <span>Labels:</span>
               </span>
               {accountTags.map((tag) => {
                 const active = selectedTagFilter === tag.label;
@@ -590,7 +610,7 @@ export default function App() {
                 authUser={authUser}
                 profile={profile}
                 connectedApps={connectedApps}
-                securityEvents={securityEvents}
+                notifications={notifications}
                 availableTags={accountTags}
                 searchQuery={searchQuery}
                 selectedTagFilter={selectedTagFilter}
@@ -601,14 +621,23 @@ export default function App() {
               />
             )}
 
+            {activeTab === 'notifications' && (
+              <NotificationsSection
+                authUser={authUser}
+                profile={profile}
+                notifications={notifications}
+                searchQuery={searchQuery}
+              />
+            )}
+
             {activeTab === 'apps' && (
               <ConnectedAppsSection
                 authUser={authUser}
                 connectedApps={connectedApps}
                 availableTags={accountTags}
+                notificationPreferences={profile.notificationPreferences}
                 searchQuery={searchQuery}
                 selectedTagFilter={selectedTagFilter}
-                onSimulateIncomingRedirect={handleSimulateIncomingRedirect}
                 onLaunchReturn={handleLaunchReturnFromApp}
               />
             )}

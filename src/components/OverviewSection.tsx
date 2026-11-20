@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
+  Bell,
   CheckCircle2,
   Fingerprint,
   Globe,
@@ -15,6 +16,7 @@ import {
 import { generateTotpSecret, verifyTotpCode } from '../lib/authenticator';
 import { formatFirestoreTimestamp, getTagButtonClasses } from '../lib/formatters';
 import {
+  createCrossPlatformNotification,
   logSecurityEvent,
   updateProfileDetails,
   updateSecurityPreferences,
@@ -25,11 +27,12 @@ import {
   isPinExpiredOrDue,
 } from '../lib/securityEnrollment';
 import {
+  AccountNotification,
   AccountTag,
   ConnectedApp,
   PlatformType,
-  SecurityEvent,
   UserProfile,
+  WorkspaceTab,
 } from '../types/systemOne';
 import { BuiltInAuthenticatorCard } from './BuiltInAuthenticatorCard';
 
@@ -37,23 +40,33 @@ interface OverviewSectionProps {
   authUser: User;
   profile: UserProfile;
   connectedApps: ConnectedApp[];
-  securityEvents: SecurityEvent[];
+  notifications: AccountNotification[];
   availableTags: AccountTag[];
   searchQuery: string;
   selectedTagFilter: string | null;
   isMobileDevice: boolean;
   onSelectTagFilter: (tag: string | null) => void;
-  onNavigateTab: (tab: 'apps' | 'security' | 'tags') => void;
+  onNavigateTab: (tab: WorkspaceTab) => void;
   onTriggerEnrollmentModal: () => void;
 }
 
-const DEFAULT_AVATAR = '/src/assets/images/default_profile_avatar_1795162285217.jpg';
+const LANGUAGE_OPTIONS = [
+  'English',
+  'French',
+  'Spanish',
+  'German',
+  'Portuguese',
+  'Arabic',
+  'Chinese',
+  'Japanese',
+  'Other',
+];
 
 export function OverviewSection({
   authUser,
   profile,
   connectedApps,
-  securityEvents,
+  notifications,
   availableTags,
   searchQuery,
   selectedTagFilter,
@@ -62,23 +75,46 @@ export function OverviewSection({
   onNavigateTab,
   onTriggerEnrollmentModal,
 }: OverviewSectionProps) {
+  const [firstName, setFirstName] = useState(profile.firstName);
+  const [lastName, setLastName] = useState(profile.lastName);
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [handle, setHandle] = useState(profile.handle);
+  const [dateOfBirth, setDateOfBirth] = useState(profile.dateOfBirth);
+  const [gender, setGender] = useState(profile.gender);
   const [bio, setBio] = useState(profile.bio);
-  const [phone, setPhone] = useState(profile.phone);
-  const [location, setLocation] = useState(profile.location);
   const [photoURL, setPhotoURL] = useState(profile.photoURL);
+
+  const [secondaryEmail, setSecondaryEmail] = useState(profile.secondaryEmail);
+  const [phone, setPhone] = useState(profile.phone);
+  const [website, setWebsite] = useState(profile.website);
+
+  const [streetAddress, setStreetAddress] = useState(profile.streetAddress);
+  const [city, setCity] = useState(profile.city);
+  const [stateRegion, setStateRegion] = useState(profile.stateRegion);
+  const [postalCode, setPostalCode] = useState(profile.postalCode);
+  const [country, setCountry] = useState(profile.country);
+  const [timezone, setTimezone] = useState(profile.timezone);
+  const [preferredLanguage, setPreferredLanguage] = useState(
+    profile.preferredLanguage || 'English'
+  );
+
+  const [occupation, setOccupation] = useState(profile.occupation);
+  const [company, setCompany] = useState(profile.company);
+  const [emergencyContactName, setEmergencyContactName] = useState(
+    profile.emergencyContactName
+  );
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState(
+    profile.emergencyContactPhone
+  );
   const [primaryPlatform, setPrimaryPlatform] = useState<PlatformType>(
     profile.primaryPlatform
   );
   const [tags, setTags] = useState<string[]>(profile.tags);
+
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Human Verification State:
-  // Non-mobile devices MUST use the built-in 6-digit authenticator.
-  // Mobile devices can choose Biometrics OR the built-in 6-digit authenticator.
   const [pendingSecret] = useState(
     () => profile.securityPreferences.authenticatorSecret || generateTotpSecret()
   );
@@ -90,12 +126,28 @@ export function OverviewSection({
   const [humanError, setHumanError] = useState<string | null>(null);
 
   useEffect(() => {
+    setFirstName(profile.firstName);
+    setLastName(profile.lastName);
     setDisplayName(profile.displayName);
     setHandle(profile.handle);
+    setDateOfBirth(profile.dateOfBirth);
+    setGender(profile.gender);
     setBio(profile.bio);
-    setPhone(profile.phone);
-    setLocation(profile.location);
     setPhotoURL(profile.photoURL);
+    setSecondaryEmail(profile.secondaryEmail);
+    setPhone(profile.phone);
+    setWebsite(profile.website);
+    setStreetAddress(profile.streetAddress);
+    setCity(profile.city);
+    setStateRegion(profile.stateRegion);
+    setPostalCode(profile.postalCode);
+    setCountry(profile.country);
+    setTimezone(profile.timezone);
+    setPreferredLanguage(profile.preferredLanguage || 'English');
+    setOccupation(profile.occupation);
+    setCompany(profile.company);
+    setEmergencyContactName(profile.emergencyContactName);
+    setEmergencyContactPhone(profile.emergencyContactPhone);
     setPrimaryPlatform(profile.primaryPlatform);
     setTags(profile.tags);
   }, [profile]);
@@ -118,6 +170,8 @@ export function OverviewSection({
     profile.securityPreferences.pinExpiresAt
   );
 
+  const unreadNotifications = notifications.filter((n) => !n.read);
+
   const toggleProfileTag = (label: string) => {
     setTags((prev) => {
       if (prev.includes(label)) {
@@ -134,7 +188,7 @@ export function OverviewSection({
 
     const cleaned = totpCodeInput.replace(/\D/g, '').trim();
     if (cleaned.length !== 6) {
-      setHumanError('Please enter the 6-digit code shown in the System One Authenticator.');
+      setHumanError('Please enter all 6 numbers shown on the screen.');
       return;
     }
 
@@ -143,7 +197,7 @@ export function OverviewSection({
       const valid = await verifyTotpCode(activeSecret, cleaned);
       if (!valid) {
         setHumanError(
-          'That 6-digit authenticator code does not match or just rotated. Please enter the current 6 digits.'
+          'That 6-digit code did not match or just expired. Please enter the current numbers.'
         );
         return;
       }
@@ -157,24 +211,36 @@ export function OverviewSection({
       });
 
       await logSecurityEvent(authUser.uid, {
-        title: 'Human verification completed via 6-digit authenticator',
+        title: 'Person check completed with 6-digit authenticator code',
         category: 'security',
         platform: isMobileDevice ? 'mobile' : primaryPlatform,
         provider: 'totp_authenticator',
         targetUrl: window.location.origin,
-        tags: ['Security Audit', 'Core Identity'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
 
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: 'Account unlocked',
+          message:
+            'Your person check is done and your 6-digit login code is turned on.',
+          category: 'security',
+          sourcePlatform: isMobileDevice ? 'mobile' : primaryPlatform,
+        },
+        profile.notificationPreferences
+      );
+
       setSaveMessage(
-        'Human verification complete and built-in authenticator activated. You can now update your profile.'
+        'Thank you! Your person check is done. You can now fill out and save your profile.'
       );
       if (needsDeviceActivation) {
         onTriggerEnrollmentModal();
       }
     } catch (err) {
       setHumanError(
-        err instanceof Error ? err.message : 'Unable to save human verification status.'
+        err instanceof Error ? err.message : 'Unable to save verification right now.'
       );
     } finally {
       setVerifyingHuman(false);
@@ -200,21 +266,35 @@ export function OverviewSection({
       });
 
       await logSecurityEvent(authUser.uid, {
-        title: `Human verification completed via mobile biometrics (${result.method})`,
+        title: `Person check completed with mobile biometrics (${result.method})`,
         category: 'security',
         platform: 'mobile',
         provider: result.method,
         targetUrl: window.location.origin,
-        tags: ['Security Audit', 'Mobile Suite'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
 
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: 'Fingerprint / face unlock turned on',
+          message:
+            'Your person check is complete and mobile quick unlock is active.',
+          category: 'security',
+          sourcePlatform: 'mobile',
+        },
+        profile.notificationPreferences
+      );
+
       setSaveMessage(
-        'Human verification and mobile biometrics login confirmed. You can now update your profile.'
+        'Thank you! Your person check is done. You can now fill out and save your profile.'
       );
     } catch (err) {
       setHumanError(
-        err instanceof Error ? err.message : 'Unable to complete biometric verification.'
+        err instanceof Error
+          ? err.message
+          : 'Could not verify with fingerprint/face unlock. Try the 6-digit code instead.'
       );
     } finally {
       setVerifyingHuman(false);
@@ -224,7 +304,7 @@ export function OverviewSection({
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isHumanVerified) {
-      setErrorMessage('Complete the human verification check above before saving your profile.');
+      setErrorMessage('Please finish the quick person check above before saving.');
       return;
     }
 
@@ -233,19 +313,40 @@ export function OverviewSection({
     setErrorMessage(null);
 
     try {
+      const locationSummary = [city.trim(), country.trim()]
+        .filter(Boolean)
+        .join(', ');
+
       await updateProfileDetails(authUser.uid, {
+        secondaryEmail,
+        firstName,
+        lastName,
         displayName,
         handle,
+        dateOfBirth,
+        gender,
         bio,
         phone,
-        location,
+        website,
+        streetAddress,
+        city,
+        stateRegion,
+        postalCode,
+        country,
+        location: locationSummary,
+        timezone,
+        preferredLanguage,
+        occupation,
+        company,
+        emergencyContactName,
+        emergencyContactPhone,
         photoURL,
         primaryPlatform,
         tags,
       });
 
       await logSecurityEvent(authUser.uid, {
-        title: 'Unified account profile settings updated',
+        title: 'Profile details updated',
         category: 'profile',
         platform: primaryPlatform,
         provider: profile.linkedProviders[0] || 'password',
@@ -254,14 +355,28 @@ export function OverviewSection({
         status: 'completed',
       });
 
-      setSaveMessage('Profile changes synchronized across all connected applications.');
+      if (profile.notificationPreferences.profileUpdateAlert) {
+        await createCrossPlatformNotification(
+          authUser.uid,
+          {
+            title: 'Profile updated',
+            message:
+              'Your personal details were saved and are ready across all your connected apps.',
+            category: 'account',
+            sourcePlatform: isMobileDevice ? 'mobile' : primaryPlatform,
+          },
+          profile.notificationPreferences
+        );
+      }
+
+      setSaveMessage('Your profile has been saved and updated across all your apps.');
 
       if (needsDeviceActivation) {
         onTriggerEnrollmentModal();
       }
     } catch (err) {
       setErrorMessage(
-        err instanceof Error ? err.message : 'Unable to save profile updates.'
+        err instanceof Error ? err.message : 'Unable to save your profile changes.'
       );
     } finally {
       setSaving(false);
@@ -281,35 +396,35 @@ export function OverviewSection({
     return matchesTag && matchesQuery;
   });
 
-  const avatarSrc = photoURL.trim() || DEFAULT_AVATAR;
+  const initials = (profile.displayName || profile.email || 'M')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('');
 
   return (
     <div className="space-y-8">
-      {/* Step 1 Post-Signup Gate: Authenticator-Only on Desktop/Web; Biometrics OR Authenticator on Mobile */}
+      {/* Step 1: Plain-Language Human Check */}
       {!isHumanVerified && (
         <section
-          aria-label="Human verification required"
+          aria-label="Confirm you are a real person"
           className="bg-gradient-to-r from-sky-50 via-white to-indigo-50/70 border border-sky-200 rounded-2xl p-6 sm:p-8"
         >
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             <div className="lg:col-span-6 space-y-4">
               <div className="inline-flex items-center gap-2 text-xs font-semibold text-sky-800">
                 <ShieldCheck className="w-4 h-4 text-sky-700" />
-                <span>
-                  {isMobileDevice
-                    ? 'Step 1 · Human Verification (Biometrics or Authenticator)'
-                    : 'Step 1 · Human Verification (Authenticator App Required)'}
-                </span>
+                <span>Quick Safety Check</span>
               </div>
               <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
                 {isMobileDevice
-                  ? 'Verify you are human with biometrics or your 6-digit authenticator'
-                  : 'Verify you are human using the 6-digit System One Authenticator'}
+                  ? 'Confirm you are a real person'
+                  : 'Enter the 6-digit code to unlock your profile'}
               </h2>
               <p className="text-sm text-slate-600 leading-relaxed">
                 {isMobileDevice
-                  ? 'On mobile devices, choose between hardware biometrics or the built-in 6-digit authenticator code to unlock your unified profile.'
-                  : 'On desktop and web browsers, you must verify using the 6-digit authenticator code below before editing your profile or activating your 90-day 6-digit PIN.'}
+                  ? 'Choose your fingerprint/face unlock or enter the 6-digit code below. Once done, you can update all of your profile details.'
+                  : 'Before you edit your profile, type the 6 numbers shown below. This protects your account and turns on your 6-digit login code.'}
               </p>
 
               {(!isMobileDevice || mobileVerifyChoice === 'authenticator') && (
@@ -336,7 +451,7 @@ export function OverviewSection({
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    Biometrics
+                    Fingerprint / Face
                   </button>
                   <button
                     type="button"
@@ -350,7 +465,7 @@ export function OverviewSection({
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    Authenticator App
+                    6-Digit Code
                   </button>
                 </div>
               )}
@@ -369,8 +484,8 @@ export function OverviewSection({
                   <div className="p-4 rounded-xl bg-sky-50/70 border border-sky-200/80 flex items-start gap-3">
                     <Fingerprint className="w-5 h-5 text-sky-700 shrink-0 mt-0.5" />
                     <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-                      Confirm you are human and enable mobile biometric sign-in right away, or
-                      switch to the Authenticator App tab above.
+                      Tap the button below to confirm using your phone&apos;s fingerprint or face
+                      unlock.
                     </p>
                   </div>
                   <button
@@ -381,7 +496,7 @@ export function OverviewSection({
                   >
                     <Fingerprint className="w-4 h-4" />
                     <span>
-                      {verifyingHuman ? 'Verifying...' : 'Verify Human with Biometrics'}
+                      {verifyingHuman ? 'Checking...' : 'Confirm with Fingerprint / Face'}
                     </span>
                   </button>
                 </div>
@@ -392,7 +507,7 @@ export function OverviewSection({
                       htmlFor="human-totp-input"
                       className="block text-sm font-medium text-slate-800 mb-1.5"
                     >
-                      Enter 6-Digit Authenticator Code
+                      Type the 6-digit code
                     </label>
                     <input
                       id="human-totp-input"
@@ -411,9 +526,8 @@ export function OverviewSection({
                   </div>
 
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Enter the 6 digits from the Built-In System One Authenticator (or scan the
-                    setup key into your authenticator app). This activates 6-digit login protection
-                    and confirms you are human.
+                    You can also click &ldquo;Use Code&rdquo; on the card to fill in the 6 numbers
+                    automatically.
                   </p>
 
                   <button
@@ -423,9 +537,7 @@ export function OverviewSection({
                   >
                     <ShieldCheck className="w-4 h-4" />
                     <span>
-                      {verifyingHuman
-                        ? 'Verifying...'
-                        : 'Verify Code & Unlock Profile'}
+                      {verifyingHuman ? 'Checking...' : 'Confirm & Unlock Profile'}
                     </span>
                   </button>
                 </form>
@@ -435,117 +547,116 @@ export function OverviewSection({
         </section>
       )}
 
-      {/* Unified Summary Strip */}
+      {/* Plain-Language Profile Header */}
       <section className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-100">
           <div className="flex items-center gap-4 min-w-0">
-            <img
-              src={avatarSrc}
-              alt={`${profile.displayName} avatar`}
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = DEFAULT_AVATAR;
-              }}
-              className="w-16 h-16 rounded-2xl object-cover border border-slate-200 bg-slate-100 shrink-0"
-            />
+            {photoURL.trim() ? (
+              <img
+                src={photoURL.trim()}
+                alt={`${profile.displayName} profile photo`}
+                referrerPolicy="no-referrer"
+                onError={() => setPhotoURL('')}
+                className="w-16 h-16 rounded-2xl object-cover border border-slate-200 bg-slate-100 shrink-0"
+              />
+            ) : (
+              <div
+                aria-hidden="true"
+                className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-800 border border-sky-200 flex items-center justify-center text-lg font-bold shrink-0"
+              >
+                {initials}
+              </div>
+            )}
+
             <div className="min-w-0">
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900 truncate">
                 {profile.displayName}
               </h1>
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-slate-600">
                 <span>{profile.email}</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono">@{profile.handle || 'member'}</span>
-                <span aria-hidden="true">·</span>
-                <span className="capitalize">{profile.primaryPlatform} primary</span>
+                {profile.handle && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>@{profile.handle}</span>
+                  </>
+                )}
+                {profile.location && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>{profile.location}</span>
+                  </>
+                )}
               </div>
-              {profile.tags.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                  {profile.tags.map((t, idx) => (
-                    <span key={t} className="inline-flex items-center gap-2">
-                      {idx > 0 && <span aria-hidden="true">·</span>}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onSelectTagFilter(selectedTagFilter === t ? null : t)
-                        }
-                        className={`hover:text-sky-700 transition-colors ${
-                          selectedTagFilter === t ? 'text-sky-700 font-semibold' : ''
-                        }`}
-                      >
-                        #{t}
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Everything you save on your profile works across all your apps and devices.
+              </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             <button
               type="button"
-              onClick={() => onNavigateTab('apps')}
-              className="px-4 py-2.5 text-sm font-medium text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap"
+              onClick={() => onNavigateTab('notifications')}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap"
             >
-              Manage Apps
+              <Bell className="w-4 h-4" />
+              <span>Notifications ({unreadNotifications.length})</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigateTab('security')}
               className="px-4 py-2.5 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 rounded-lg transition-colors whitespace-nowrap"
             >
-              Security Center
+              Security Settings
             </button>
           </div>
         </div>
 
-        {/* Clean 4-column Tabular KPI Strip */}
+        {/* Simple Summary Numbers */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 pt-6">
           <div>
-            <p className="text-xs font-medium text-slate-500">Active Connected Apps</p>
+            <p className="text-xs font-medium text-slate-500">Apps You Connected</p>
             <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums font-mono">
               {activeAppsCount}
             </p>
           </div>
           <div>
-            <p className="text-xs font-medium text-slate-500">Linked Sign-In Methods</p>
+            <p className="text-xs font-medium text-slate-500">Unread Alerts</p>
+            <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums font-mono">
+              {unreadNotifications.length}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-slate-500">Sign-In Methods</p>
             <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums font-mono">
               {profile.linkedProviders.length}
             </p>
           </div>
           <div>
-            <p className="text-xs font-medium text-slate-500">Account Tags</p>
+            <p className="text-xs font-medium text-slate-500">Your Labels</p>
             <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums font-mono">
               {availableTags.length}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-slate-500">Recorded Events</p>
-            <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums font-mono">
-              {securityEvents.length}
             </p>
           </div>
         </div>
       </section>
 
-      {/* Main Split: Profile Settings Form + Identity Credentials & Quick Apps */}
+      {/* Main Split: Elaborate Update Profile Form + Plain-Language Status Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         <section className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 sm:p-8">
           <div className="mb-6 flex items-start justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">
-                Unified Profile & Identity Details
+                Update Your Profile Information
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Changes made here automatically propagate across every connected mobile, desktop,
-                and web application.
+                Fill in your details below so all your apps have the right information about you.
               </p>
             </div>
             {!isHumanVerified && (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-800 shrink-0">
                 <Lock className="w-3.5 h-3.5" />
-                <span>Verify First</span>
+                <span>Unlock above first</span>
               </span>
             )}
           </div>
@@ -566,201 +677,584 @@ export function OverviewSection({
             </div>
           )}
 
-          <form onSubmit={handleSaveProfile} className="space-y-5">
-            <fieldset disabled={!isHumanVerified || saving} className="space-y-5 disabled:opacity-60">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <form onSubmit={handleSaveProfile} className="space-y-8">
+            <fieldset disabled={!isHumanVerified || saving} className="space-y-8 disabled:opacity-60">
+              {/* Group 1: Personal Details */}
+              <div className="space-y-4">
+                <div className="pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    1. Personal Details
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Your name, birthday, and a short note about yourself.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-first-name"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      First Name
+                    </label>
+                    <input
+                      id="profile-first-name"
+                      type="text"
+                      maxLength={40}
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="Enter your first name"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-last-name"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Last Name
+                    </label>
+                    <input
+                      id="profile-last-name"
+                      type="text"
+                      maxLength={40}
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      placeholder="Enter your last name"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-display-name"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Display Name
+                    </label>
+                    <input
+                      id="profile-display-name"
+                      type="text"
+                      required
+                      maxLength={80}
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      placeholder="How your name appears in apps"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-handle"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Username
+                    </label>
+                    <input
+                      id="profile-handle"
+                      type="text"
+                      maxLength={40}
+                      value={handle}
+                      onChange={(e) =>
+                        setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))
+                      }
+                      placeholder="Letters, numbers, dots, or underscores"
+                      className="w-full px-3.5 py-2.5 text-sm font-mono text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-dob"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Date of Birth
+                    </label>
+                    <input
+                      id="profile-dob"
+                      type="date"
+                      value={dateOfBirth}
+                      onChange={(e) => setDateOfBirth(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-gender"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Gender
+                    </label>
+                    <select
+                      id="profile-gender"
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    >
+                      <option value="">Prefer not to say</option>
+                      <option value="Female">Female</option>
+                      <option value="Male">Male</option>
+                      <option value="Non-binary">Non-binary</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <label
-                    htmlFor="profile-display-name"
+                    htmlFor="profile-bio"
                     className="block text-sm font-medium text-slate-800 mb-1.5"
                   >
-                    Display Name
+                    About You
                   </label>
-                  <input
-                    id="profile-display-name"
-                    type="text"
-                    required
-                    maxLength={80}
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
+                  <textarea
+                    id="profile-bio"
+                    rows={3}
+                    maxLength={300}
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                    placeholder="Write a short introduction about yourself"
                     className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
                   />
+                  <p className="mt-1 text-xs text-slate-500 text-right tabular-nums">
+                    {bio.length} / 300
+                  </p>
                 </div>
 
                 <div>
                   <label
-                    htmlFor="profile-handle"
+                    htmlFor="profile-photo"
                     className="block text-sm font-medium text-slate-800 mb-1.5"
                   >
-                    Universal Handle
+                    Profile Photo Link (Optional)
                   </label>
-                  <input
-                    id="profile-handle"
-                    type="text"
-                    maxLength={40}
-                    value={handle}
-                    onChange={(e) =>
-                      setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))
-                    }
-                    placeholder="alex.morgan"
-                    className="w-full px-3.5 py-2.5 text-sm font-mono text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="profile-bio"
-                  className="block text-sm font-medium text-slate-800 mb-1.5"
-                >
-                  Account Summary
-                </label>
-                <textarea
-                  id="profile-bio"
-                  rows={3}
-                  maxLength={300}
-                  value={bio}
-                  onChange={(e) => setBio(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
-                />
-                <p className="mt-1 text-xs text-slate-500 text-right tabular-nums">
-                  {bio.length} / 300
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label
-                    htmlFor="profile-phone"
-                    className="block text-sm font-medium text-slate-800 mb-1.5"
-                  >
-                    Recovery Phone (Optional)
-                  </label>
-                  <input
-                    id="profile-phone"
-                    type="tel"
-                    maxLength={32}
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+1 (555) 240-9100"
-                    className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="profile-location"
-                    className="block text-sm font-medium text-slate-800 mb-1.5"
-                  >
-                    Region / Location
-                  </label>
-                  <input
-                    id="profile-location"
-                    type="text"
-                    maxLength={80}
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    placeholder="San Francisco, CA"
-                    className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="profile-photo"
-                  className="block text-sm font-medium text-slate-800 mb-1.5"
-                >
-                  Avatar Image URL
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     id="profile-photo"
                     type="text"
                     maxLength={500}
                     value={photoURL}
                     onChange={(e) => setPhotoURL(e.target.value)}
-                    placeholder="https://... or leave blank for System One default"
-                    className="flex-1 px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    placeholder="Paste a link to your photo, or leave blank to use your initials"
+                    className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setPhotoURL(DEFAULT_AVATAR)}
-                    className="px-3.5 py-2.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors whitespace-nowrap"
+                </div>
+              </div>
+
+              {/* Group 2: Contact Information */}
+              <div className="space-y-4">
+                <div className="pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    2. Contact Information
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Ways to reach you or help you get back into your account.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-primary-email"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Primary Email
+                    </label>
+                    <input
+                      id="profile-primary-email"
+                      type="email"
+                      readOnly
+                      value={profile.email}
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-secondary-email"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Backup Email (Optional)
+                    </label>
+                    <input
+                      id="profile-secondary-email"
+                      type="email"
+                      maxLength={254}
+                      value={secondaryEmail}
+                      onChange={(e) => setSecondaryEmail(e.target.value)}
+                      placeholder="Another email address you check"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-phone"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Phone Number
+                    </label>
+                    <input
+                      id="profile-phone"
+                      type="tel"
+                      maxLength={32}
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="Enter your phone number"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-website"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Personal Website (Optional)
+                    </label>
+                    <input
+                      id="profile-website"
+                      type="text"
+                      maxLength={200}
+                      value={website}
+                      onChange={(e) => setWebsite(e.target.value)}
+                      placeholder="https://yourwebsite.com"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 3: Address & Language */}
+              <div className="space-y-4">
+                <div className="pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    3. Home Address &amp; Language
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Where you live and what language and time zone you prefer.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="profile-street"
+                    className="block text-sm font-medium text-slate-800 mb-1.5"
                   >
-                    Use Default Portrait
-                  </button>
+                    Street Address
+                  </label>
+                  <input
+                    id="profile-street"
+                    type="text"
+                    maxLength={120}
+                    value={streetAddress}
+                    onChange={(e) => setStreetAddress(e.target.value)}
+                    placeholder="House number and street name"
+                    className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-city"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      City
+                    </label>
+                    <input
+                      id="profile-city"
+                      type="text"
+                      maxLength={60}
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="Enter your city"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-state"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      State / Province
+                    </label>
+                    <input
+                      id="profile-state"
+                      type="text"
+                      maxLength={60}
+                      value={stateRegion}
+                      onChange={(e) => setStateRegion(e.target.value)}
+                      placeholder="Enter your state or province"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-postal"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Postal / ZIP Code
+                    </label>
+                    <input
+                      id="profile-postal"
+                      type="text"
+                      maxLength={24}
+                      value={postalCode}
+                      onChange={(e) => setPostalCode(e.target.value)}
+                      placeholder="Enter postal or ZIP code"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-country"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Country
+                    </label>
+                    <input
+                      id="profile-country"
+                      type="text"
+                      maxLength={80}
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      placeholder="Enter your country"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-language"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Preferred Language
+                    </label>
+                    <select
+                      id="profile-language"
+                      value={preferredLanguage}
+                      onChange={(e) => setPreferredLanguage(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    >
+                      {LANGUAGE_OPTIONS.map((lang) => (
+                        <option key={lang} value={lang}>
+                          {lang}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-timezone"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Time Zone
+                    </label>
+                    <input
+                      id="profile-timezone"
+                      type="text"
+                      maxLength={64}
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      placeholder="For example: Europe/London"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <span className="block text-sm font-medium text-slate-800 mb-2">
-                  Primary Platform
-                </span>
-                <div className="grid grid-cols-3 gap-2.5">
-                  {[
-                    { id: 'web' as PlatformType, label: 'Web', Icon: Globe },
-                    { id: 'mobile' as PlatformType, label: 'Mobile', Icon: Smartphone },
-                    { id: 'desktop' as PlatformType, label: 'Desktop', Icon: Monitor },
-                  ].map(({ id, label, Icon }) => {
-                    const active = primaryPlatform === id;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setPrimaryPlatform(id)}
-                        className={`flex items-center justify-center gap-2 py-2.5 px-3 text-sm font-medium rounded-xl border transition-colors ${
-                          active
-                            ? 'bg-sky-50 border-sky-600 text-sky-900'
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4" />
-                        <span>{label}</span>
-                      </button>
-                    );
-                  })}
+              {/* Group 4: Work & Education */}
+              <div className="space-y-4">
+                <div className="pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    4. Work &amp; Organization
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Your job, school, or group (optional).
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-occupation"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Job Title or Role
+                    </label>
+                    <input
+                      id="profile-occupation"
+                      type="text"
+                      maxLength={80}
+                      value={occupation}
+                      onChange={(e) => setOccupation(e.target.value)}
+                      placeholder="What you do"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-company"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Company or School
+                    </label>
+                    <input
+                      id="profile-company"
+                      type="text"
+                      maxLength={80}
+                      value={company}
+                      onChange={(e) => setCompany(e.target.value)}
+                      placeholder="Where you work or study"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-slate-800">
-                    Account Organization Tags
+              {/* Group 5: Emergency Contact & Device Choice */}
+              <div className="space-y-4">
+                <div className="pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    5. Emergency Contact &amp; Main Device
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Someone we should keep on file in an emergency, plus your main device.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="profile-emergency-name"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Emergency Contact Name
+                    </label>
+                    <input
+                      id="profile-emergency-name"
+                      type="text"
+                      maxLength={80}
+                      value={emergencyContactName}
+                      onChange={(e) => setEmergencyContactName(e.target.value)}
+                      placeholder="Full name of someone you trust"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="profile-emergency-phone"
+                      className="block text-sm font-medium text-slate-800 mb-1.5"
+                    >
+                      Emergency Contact Phone
+                    </label>
+                    <input
+                      id="profile-emergency-phone"
+                      type="tel"
+                      maxLength={32}
+                      value={emergencyContactPhone}
+                      onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                      placeholder="Their phone number"
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-100"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <span className="block text-sm font-medium text-slate-800 mb-2">
+                    Main Device You Use
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onNavigateTab('tags')}
-                    className="text-xs font-medium text-sky-700 hover:text-sky-800"
-                  >
-                    Manage Tags
-                  </button>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {[
+                      { id: 'web' as PlatformType, label: 'Web', Icon: Globe },
+                      { id: 'mobile' as PlatformType, label: 'Mobile', Icon: Smartphone },
+                      { id: 'desktop' as PlatformType, label: 'Desktop', Icon: Monitor },
+                    ].map(({ id, label, Icon }) => {
+                      const active = primaryPlatform === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setPrimaryPlatform(id)}
+                          className={`flex items-center justify-center gap-2 py-2.5 px-3 text-sm font-medium rounded-xl border transition-colors ${
+                            active
+                              ? 'bg-sky-50 border-sky-600 text-sky-900'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Icon className="w-4 h-4" />
+                          <span>{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {availableTags.map((tag) => {
-                    const selected = tags.includes(tag.label);
-                    return (
-                      <button
-                        key={tag.id}
-                        type="button"
-                        onClick={() => toggleProfileTag(tag.label)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${getTagButtonClasses(
-                          tag.tone,
-                          selected
-                        )}`}
-                      >
-                        <TagIcon className="w-3 h-3" />
-                        <span>{tag.label}</span>
-                      </button>
-                    );
-                  })}
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-slate-800">
+                      Your Labels
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('tags')}
+                      className="text-xs font-medium text-sky-700 hover:text-sky-800"
+                    >
+                      Create or manage labels
+                    </button>
+                  </div>
+                  {availableTags.length === 0 ? (
+                    <p className="text-xs text-slate-500">
+                      You have not created any labels yet. Use labels to organize your profile and apps.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {availableTags.map((tag) => {
+                        const selected = tags.includes(tag.label);
+                        return (
+                          <button
+                            key={tag.id}
+                            type="button"
+                            onClick={() => toggleProfileTag(tag.label)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${getTagButtonClasses(
+                              tag.tone,
+                              selected
+                            )}`}
+                          >
+                            <TagIcon className="w-3 h-3" />
+                            <span>{tag.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </fieldset>
 
             <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
               <p className="text-xs text-slate-500">
-                Last synced {formatFirestoreTimestamp(profile.updatedAt)}
+                Last saved {formatFirestoreTimestamp(profile.updatedAt)}
               </p>
               <button
                 type="submit"
@@ -774,62 +1268,65 @@ export function OverviewSection({
           </form>
         </section>
 
-        {/* Right Column: Identity Metadata, Built-In Authenticator & Quick Apps */}
+        {/* Right Column: Plain-Language Account Status, Authenticator, Notifications & Real Apps */}
         <aside className="lg:col-span-5 space-y-6">
           <section className="bg-white border border-slate-200 rounded-2xl p-6">
             <h2 className="text-base font-semibold text-slate-900">
-              Identity & Device Protection
+              Account Safety Summary
             </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              A quick look at how your account is protected.
+            </p>
             <dl className="mt-4 divide-y divide-slate-100 text-sm">
               <div className="py-3 flex items-center justify-between gap-4">
-                <dt className="text-slate-500">System One UID</dt>
-                <dd className="font-mono text-xs text-slate-900 truncate max-w-[200px]">
+                <dt className="text-slate-500">Account ID</dt>
+                <dd className="font-mono text-xs text-slate-900 truncate max-w-[190px]">
                   {profile.uid}
                 </dd>
               </div>
               <div className="py-3 flex items-center justify-between gap-4">
-                <dt className="text-slate-500">Email Verification</dt>
+                <dt className="text-slate-500">Email confirmed</dt>
                 <dd className="font-medium text-emerald-700">
-                  {authUser.emailVerified ? 'Verified' : 'Pending'}
+                  {authUser.emailVerified ? 'Yes' : 'Waiting'}
                 </dd>
               </div>
               <div className="py-3 flex items-center justify-between gap-4">
-                <dt className="text-slate-500">Human Verification</dt>
+                <dt className="text-slate-500">Person check</dt>
                 <dd
                   className={`font-medium ${
                     isHumanVerified ? 'text-emerald-700' : 'text-amber-700'
                   }`}
                 >
-                  {isHumanVerified ? 'Confirmed' : 'Action Required'}
+                  {isHumanVerified ? 'Done' : 'Needed'}
                 </dd>
               </div>
               <div className="py-3 flex items-center justify-between gap-4">
-                <dt className="text-slate-500">6-Digit Authenticator</dt>
+                <dt className="text-slate-500">6-digit login code</dt>
                 <dd className="font-medium">
                   {profile.securityPreferences.authenticatorEnabled ? (
-                    <span className="text-emerald-700">Active</span>
+                    <span className="text-emerald-700">On</span>
                   ) : (
-                    <span className="text-slate-500">Optional on Mobile</span>
+                    <span className="text-slate-500">Off</span>
                   )}
                 </dd>
               </div>
               <div className="py-3 flex items-center justify-between gap-4">
                 <dt className="text-slate-500">
-                  {isMobileDevice ? 'Mobile Biometrics' : '6-Digit Security PIN'}
+                  {isMobileDevice ? 'Fingerprint / face' : '6-digit PIN'}
                 </dt>
                 <dd className="font-medium text-right">
                   {isMobileDevice ? (
                     profile.securityPreferences.biometricsEnabled ? (
-                      <span className="text-emerald-700">Active</span>
+                      <span className="text-emerald-700">On</span>
                     ) : (
-                      <span className="text-amber-700">Not Activated</span>
+                      <span className="text-amber-700">Not set up</span>
                     )
                   ) : profile.securityPreferences.pinConfigured ? (
                     <span className="text-emerald-700 tabular-nums">
-                      Active · {pinDaysRemaining ?? 90}d left
+                      On · {pinDaysRemaining ?? 90}d left
                     </span>
                   ) : (
-                    <span className="text-amber-700">Not Configured</span>
+                    <span className="text-amber-700">Not set up</span>
                   )}
                 </dd>
               </div>
@@ -846,8 +1343,8 @@ export function OverviewSection({
                     <Fingerprint className="w-4 h-4" />
                     <span>
                       {profile.securityPreferences.biometricsEnabled
-                        ? 'Re-Verify Mobile Biometrics'
-                        : 'Activate Mobile Biometrics'}
+                        ? 'Check Fingerprint / Face Unlock'
+                        : 'Turn On Fingerprint / Face Unlock'}
                     </span>
                   </>
                 ) : (
@@ -855,8 +1352,8 @@ export function OverviewSection({
                     <KeyRound className="w-4 h-4" />
                     <span>
                       {profile.securityPreferences.pinConfigured
-                        ? 'Update 6-Digit Security PIN'
-                        : 'Activate 6-Digit PIN (90-Day Cycle)'}
+                        ? 'Change Your 6-Digit PIN'
+                        : 'Set Up Your 6-Digit PIN (90-Day Change)'}
                     </span>
                   </>
                 )}
@@ -871,24 +1368,82 @@ export function OverviewSection({
             />
           )}
 
+          {/* Cross-Platform Notifications Quick Feed */}
           <section className="bg-white border border-slate-200 rounded-2xl p-6">
             <div className="flex items-center justify-between gap-4 mb-4">
               <h2 className="text-base font-semibold text-slate-900">
-                Connected Applications
+                Recent Notifications
+              </h2>
+              <button
+                type="button"
+                onClick={() => onNavigateTab('notifications')}
+                className="text-xs font-medium text-sky-700 hover:text-sky-800"
+              >
+                Open Notifications
+              </button>
+            </div>
+
+            {notifications.length === 0 ? (
+              <p className="text-sm text-slate-500 py-2">
+                No notifications yet. Alerts for your web, mobile, and desktop apps will show up here.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {notifications.slice(0, 3).map((item) => (
+                  <li key={item.id} className="py-3 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-900 truncate">
+                        {item.title}
+                      </p>
+                      <span
+                        className={`text-xs shrink-0 ${
+                          item.read ? 'text-slate-400' : 'text-sky-700 font-medium'
+                        }`}
+                      >
+                        {item.read ? 'Read' : 'New'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600 line-clamp-2">
+                      {item.message}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Connected Apps (Zero Dummy Data) */}
+          <section className="bg-white border border-slate-200 rounded-2xl p-6">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <h2 className="text-base font-semibold text-slate-900">
+                Your Connected Apps
               </h2>
               <button
                 type="button"
                 onClick={() => onNavigateTab('apps')}
                 className="text-xs font-medium text-sky-700 hover:text-sky-800"
               >
-                View All
+                Manage Apps
               </button>
             </div>
 
             {matchingApps.length === 0 ? (
-              <p className="text-sm text-slate-500 py-4">
-                No connected applications match your current search or tag filter.
-              </p>
+              <div className="py-2 space-y-2">
+                <p className="text-sm text-slate-500">
+                  {connectedApps.length === 0
+                    ? 'You have not connected any apps yet.'
+                    : 'No apps match your search or selected label.'}
+                </p>
+                {connectedApps.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateTab('apps')}
+                    className="text-xs font-medium text-sky-700 hover:text-sky-800"
+                  >
+                    Connect your first app
+                  </button>
+                )}
+              </div>
             ) : (
               <ul className="divide-y divide-slate-100">
                 {matchingApps.slice(0, 4).map((app) => (

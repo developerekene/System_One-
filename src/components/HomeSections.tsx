@@ -168,7 +168,7 @@ export function HomeSections({ onJumpToAuth }: HomeSectionsProps) {
             <h3 className="text-sm font-semibold text-slate-900">Mobile Apps (iOS & Android)</h3>
             <p className="text-sm text-slate-600 leading-relaxed">
               Supports custom deep-link schemes such as{' '}
-              <code className="font-mono text-xs">systemone-pulse://auth/callback</code> with fallback
+              <code className="font-mono text-xs">myapp://auth/callback</code> with fallback
               return triggers.
             </p>
           </div>

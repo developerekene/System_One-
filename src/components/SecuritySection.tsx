@@ -5,6 +5,7 @@ import { generateTotpSecret } from '../lib/authenticator';
 import { auth } from '../lib/firebase';
 import { formatFirestoreTimestamp } from '../lib/formatters';
 import {
+  createCrossPlatformNotification,
   deleteSecurityEvent,
   logSecurityEvent,
   updateNotificationPreferences,
@@ -64,17 +65,27 @@ export function SecuritySection({
       await updateSecurityPreferences(authUser.uid, secPrefs);
       await updateNotificationPreferences(authUser.uid, notifPrefs);
       await logSecurityEvent(authUser.uid, {
-        title: 'Security & notification preferences updated',
+        title: 'Security settings updated',
         category: 'security',
         platform: profile.primaryPlatform,
         provider: 'system_one_policy',
         targetUrl: window.location.origin,
-        tags: ['Security Audit', 'Core Identity'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
-      setStatusNotice('Security and notification preferences saved across all platforms.');
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: 'Security settings saved',
+          message: 'Your updated safety rules are active across your web, mobile, and desktop apps.',
+          category: 'security',
+          sourcePlatform: isMobileDevice ? 'mobile' : profile.primaryPlatform,
+        },
+        notifPrefs
+      );
+      setStatusNotice('Security and notification settings saved for all your devices.');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unable to save preferences.');
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to save settings.');
     } finally {
       setSaving(false);
     }
@@ -89,18 +100,28 @@ export function SecuritySection({
     try {
       await sendPasswordResetEmail(auth, targetEmail);
       await logSecurityEvent(authUser.uid, {
-        title: 'Password recovery email dispatched',
+        title: 'Password reset email sent',
         category: 'security',
         platform: profile.primaryPlatform,
         provider: 'password',
         targetUrl: window.location.origin,
-        tags: ['Security Audit'],
+        tags: profile.tags.slice(0, 4),
         status: 'completed',
       });
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: 'Password reset email sent',
+          message: `We sent password reset instructions to ${targetEmail}.`,
+          category: 'security',
+          sourcePlatform: isMobileDevice ? 'mobile' : profile.primaryPlatform,
+        },
+        notifPrefs
+      );
       setStatusNotice(`Password reset link sent to ${targetEmail}.`);
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Unable to send password recovery email.'
+        err instanceof Error ? err.message : 'Unable to send password reset email.'
       );
     } finally {
       setSaving(false);
@@ -127,23 +148,41 @@ export function SecuritySection({
       setSecPrefs(updated);
       await logSecurityEvent(authUser.uid, {
         title: rotateSecret
-          ? 'Rotated built-in 6-digit authenticator secret'
+          ? 'Generated new 6-digit authenticator key'
           : nextEnabled
-            ? 'Built-in 6-digit authenticator enabled'
-            : 'Built-in 6-digit authenticator disabled',
+            ? 'Turned on 6-digit authenticator'
+            : 'Turned off 6-digit authenticator',
         category: 'security',
         platform: isMobileDevice ? 'mobile' : profile.primaryPlatform,
         provider: 'totp_authenticator',
         targetUrl: window.location.origin,
-        tags: ['Security Audit'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
+      await createCrossPlatformNotification(
+        authUser.uid,
+        {
+          title: rotateSecret
+            ? 'Authenticator key updated'
+            : nextEnabled
+              ? '6-digit authenticator turned on'
+              : '6-digit authenticator turned off',
+          message: rotateSecret
+            ? 'A fresh 6-digit setup key was generated for your account.'
+            : nextEnabled
+              ? 'Sign-ins will ask for a 6-digit code from your authenticator.'
+              : '6-digit login code check was turned off.',
+          category: 'security',
+          sourcePlatform: isMobileDevice ? 'mobile' : profile.primaryPlatform,
+        },
+        notifPrefs
+      );
       setStatusNotice(
         rotateSecret
-          ? 'New 6-digit authenticator secret generated.'
+          ? 'New 6-digit authenticator key created.'
           : nextEnabled
-            ? 'Built-in 6-digit authenticator activated for logins.'
-            : 'Built-in 6-digit authenticator turned off.'
+            ? '6-digit authenticator turned on for logins.'
+            : '6-digit authenticator turned off.'
       );
     } catch (err) {
       setErrorMsg(
@@ -176,11 +215,10 @@ export function SecuritySection({
           <div className="flex items-start justify-between gap-4 pb-5 border-b border-slate-100">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-                Cross-Platform Security Preferences
+                Security &amp; Privacy Settings
               </h1>
               <p className="mt-1 text-sm text-slate-600">
-                Govern session lifetimes, redirect trust boundaries, and account recovery
-                behavior for every app linked to System One.
+                Control how your account stays safe across all your connected apps and devices.
               </p>
             </div>
             <ShieldCheck className="w-6 h-6 text-sky-700 shrink-0 mt-1" />
@@ -207,11 +245,10 @@ export function SecuritySection({
               <label className="py-4 first:pt-0 flex items-start justify-between gap-4 cursor-pointer">
                 <div>
                   <span className="block text-sm font-semibold text-slate-900">
-                    Strict Trusted Redirect Enforcement
+                    Check unfamiliar return links
                   </span>
                   <span className="block text-xs text-slate-600 mt-0.5">
-                    Warn before redirecting via <code className="font-mono">redirect_to</code>{' '}
-                    to origins not registered in Connected Apps.
+                    Warn before sending you back to an app you have not added to Connected Apps.
                   </span>
                 </div>
                 <input
@@ -227,11 +264,10 @@ export function SecuritySection({
               <label className="py-4 flex items-start justify-between gap-4 cursor-pointer">
                 <div>
                   <span className="block text-sm font-semibold text-slate-900">
-                    Require Fresh Verification on Sensitive Edits
+                    Protect sensitive changes
                   </span>
                   <span className="block text-xs text-slate-600 mt-0.5">
-                    Enforce verified email status before modifying security rules or revoking app
-                    access.
+                    Make sure your email is confirmed before editing safety settings or removing apps.
                   </span>
                 </div>
                 <input
@@ -250,10 +286,10 @@ export function SecuritySection({
               <label className="py-4 flex items-start justify-between gap-4 cursor-pointer">
                 <div>
                   <span className="block text-sm font-semibold text-slate-900">
-                    Sign-In & Redirect Activity Alerts
+                    Record sign-in activity
                   </span>
                   <span className="block text-xs text-slate-600 mt-0.5">
-                    Record authentication and cross-app return transitions in your audit trail.
+                    Keep a log of your sign-ins and app connections in the activity list below.
                   </span>
                 </div>
                 <input
@@ -269,11 +305,10 @@ export function SecuritySection({
               <label className="py-4 flex items-start justify-between gap-4 cursor-pointer">
                 <div>
                   <span className="block text-sm font-semibold text-slate-900">
-                    Multi-Factor Verification Prompt
+                    Two-step sign-in reminder
                   </span>
                   <span className="block text-xs text-slate-600 mt-0.5">
-                    Remind connected platforms to request elevated factor verification on new
-                    devices.
+                    Remind connected devices to check your second verification step on new logins.
                   </span>
                 </div>
                 <input
@@ -293,7 +328,7 @@ export function SecuritySection({
                   htmlFor="session-timeout"
                   className="block text-sm font-medium text-slate-800 mb-1.5"
                 >
-                  Idle Session Timeout
+                  Auto Sign-Out After Inactivity
                 </label>
                 <select
                   id="session-timeout"
@@ -331,55 +366,9 @@ export function SecuritySection({
                   onChange={(e) =>
                     setSecPrefs({ ...secPrefs, passwordRecoveryEmail: e.target.value })
                   }
-                  placeholder="backup@example.com"
+                  placeholder="Enter a backup email"
                   className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-sky-600"
                 />
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 space-y-3">
-              <span className="block text-sm font-semibold text-slate-900">
-                Notification Channels
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label className="flex items-center gap-2.5 p-3 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 cursor-pointer hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={notifPrefs.newDeviceAlert}
-                    onChange={(e) =>
-                      setNotifPrefs({ ...notifPrefs, newDeviceAlert: e.target.checked })
-                    }
-                    className="w-4 h-4 accent-sky-700"
-                  />
-                  <span>New Device Alerts</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-3 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 cursor-pointer hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={notifPrefs.appAuthorizationAlert}
-                    onChange={(e) =>
-                      setNotifPrefs({
-                        ...notifPrefs,
-                        appAuthorizationAlert: e.target.checked,
-                      })
-                    }
-                    className="w-4 h-4 accent-sky-700"
-                  />
-                  <span>App Authorizations</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-3 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 cursor-pointer hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={notifPrefs.securityDigest}
-                    onChange={(e) =>
-                      setNotifPrefs({ ...notifPrefs, securityDigest: e.target.checked })
-                    }
-                    className="w-4 h-4 accent-sky-700"
-                  />
-                  <span>Weekly Digest</span>
-                </label>
               </div>
             </div>
 
@@ -390,24 +379,23 @@ export function SecuritySection({
                 className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-xl transition-colors"
               >
                 <Save className="w-4 h-4" />
-                <span>{saving ? 'Saving...' : 'Save Security Policy'}</span>
+                <span>{saving ? 'Saving...' : 'Save Security Settings'}</span>
               </button>
             </div>
           </form>
         </section>
 
-        {/* Right: Password Recovery & Session Hygiene */}
+        {/* Right: Password Recovery, PIN/Biometrics & Built-In Authenticator */}
         <aside className="lg:col-span-5 space-y-6">
           <section className="bg-white border border-slate-200 rounded-2xl p-6">
             <div className="flex items-center gap-2.5 text-slate-900">
               <KeyRound className="w-5 h-5 text-sky-700" />
-              <h2 className="text-base font-semibold">Password & Credential Recovery</h2>
+              <h2 className="text-base font-semibold">Password Reset</h2>
             </div>
             <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-              Send a Firebase password reset link to{' '}
-              <span className="font-medium text-slate-900">{authUser.email}</span> at any time.
-              If you sign in solely with Google, setting a password lets you also sign in via
-              email on desktop or mobile clients.
+              Send a password reset link to{' '}
+              <span className="font-medium text-slate-900">{authUser.email}</span> whenever you want
+              to change or add a password.
             </p>
             <button
               type="button"
@@ -429,8 +417,8 @@ export function SecuritySection({
               )}
               <h2 className="text-base font-semibold">
                 {isMobileDevice
-                  ? 'Mobile Biometrics Login'
-                  : '6-Digit Security PIN (90-Day Policy)'}
+                  ? 'Mobile Fingerprint / Face Unlock'
+                  : '6-Digit PIN (90-Day Change)'}
               </h2>
             </div>
             {isMobileDevice ? (
@@ -438,22 +426,21 @@ export function SecuritySection({
                 Status:{' '}
                 <strong className="text-slate-900">
                   {profile.securityPreferences.biometricsEnabled
-                    ? 'Biometrics Active'
-                    : 'Not Activated'}
+                    ? 'Active'
+                    : 'Not set up'}
                 </strong>
-                . Mobile devices use platform biometrics for rapid sign-on verification.
+                . Use your phone&apos;s fingerprint or face unlock for fast sign-in.
               </p>
             ) : (
               <p className="text-sm text-slate-600 leading-relaxed tabular-nums">
                 {profile.securityPreferences.pinConfigured ? (
                   isPinExpiredOrDue(profile.securityPreferences) ? (
                     <span className="text-red-700 font-medium">
-                      Your 90-day PIN rotation period has elapsed. Please activate a new 6-digit
-                      PIN.
+                      Your 90-day PIN period is up. Please set a new 6-digit PIN.
                     </span>
                   ) : (
                     <span>
-                      6-digit PIN active. Next mandatory rotation in{' '}
+                      Your 6-digit PIN is active. Next change due in{' '}
                       <strong className="text-slate-900">
                         {daysUntilPinRotation(profile.securityPreferences.pinExpiresAt) ?? 90}{' '}
                         days
@@ -462,7 +449,7 @@ export function SecuritySection({
                     </span>
                   )
                 ) : (
-                  'Desktop and web sessions require a 6-digit security PIN changed every 3 months (90 days).'
+                  'Desktop and web users set a 6-digit PIN that is updated every 3 months (90 days).'
                 )}
               </p>
             )}
@@ -475,10 +462,10 @@ export function SecuritySection({
                 {isMobileDevice
                   ? profile.securityPreferences.biometricsEnabled
                     ? 'Manage Biometrics Login'
-                    : 'Activate Biometrics Login'
+                    : 'Turn On Biometrics Login'
                   : profile.securityPreferences.pinConfigured
                     ? 'Change 6-Digit PIN'
-                    : 'Activate 6-Digit PIN'}
+                    : 'Set Up 6-Digit PIN'}
               </span>
             </button>
           </section>
@@ -497,7 +484,7 @@ export function SecuritySection({
                   className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:text-sky-800"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Rotate Key</span>
+                  <span>New Key</span>
                 </button>
               )}
             </div>
@@ -509,8 +496,7 @@ export function SecuritySection({
               />
             ) : (
               <p className="text-sm text-slate-600 leading-relaxed">
-                Generate 6-digit TOTP codes inside System One for logging in from any browser or
-                connected app.
+                Get rotating 6-digit codes right here so you can verify logins from any device.
               </p>
             )}
 
@@ -526,21 +512,10 @@ export function SecuritySection({
             >
               <span>
                 {secPrefs.authenticatorEnabled
-                  ? 'Disable 6-Digit Authenticator'
-                  : 'Activate Built-In 6-Digit Authenticator'}
+                  ? 'Turn Off 6-Digit Authenticator'
+                  : 'Turn On 6-Digit Authenticator'}
               </span>
             </button>
-          </section>
-
-          <section className="bg-gradient-to-br from-sky-50/70 to-white border border-slate-200 rounded-2xl p-6">
-            <h2 className="text-base font-semibold text-slate-900">
-              Session Continuity Guarantee
-            </h2>
-            <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-              System One persists authentication state locally across page reloads and
-              cross-platform <code className="font-mono text-xs">redirect_to</code> transitions so
-              returning users keep their verified context.
-            </p>
           </section>
         </aside>
       </div>
@@ -550,10 +525,10 @@ export function SecuritySection({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">
-              Session & Audit Activity Log
+              Account Activity History
             </h2>
             <p className="mt-0.5 text-sm text-slate-600">
-              Searchable record of sign-ins, redirect handoffs, and preference updates.
+              Real sign-ins, profile updates, and security changes on your account.
             </p>
           </div>
 
@@ -579,19 +554,19 @@ export function SecuritySection({
 
         {filteredEvents.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500">
-            No security events match your current search or tag filter.
+            No activity recorded matching your filter.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-medium text-slate-500">
-                  <th className="py-3 pr-4">Event</th>
-                  <th className="py-3 px-4">Platform</th>
-                  <th className="py-3 px-4">Tags</th>
+                  <th className="py-3 pr-4">Activity</th>
+                  <th className="py-3 px-4">Device</th>
+                  <th className="py-3 px-4">Labels</th>
                   <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Recorded</th>
-                  <th className="py-3 pl-4 text-right">Action</th>
+                  <th className="py-3 px-4 text-right">Date</th>
+                  <th className="py-3 pl-4 text-right">Remove</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">

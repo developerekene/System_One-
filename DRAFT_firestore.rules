@@ -6,7 +6,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Phase 3: Hardened Global Helpers
+    // Hardened Global Helpers
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -111,16 +111,28 @@ service cloud.firestore {
         prefs.keys().hasAll([
           'securityDigest',
           'newDeviceAlert',
-          'appAuthorizationAlert'
+          'appAuthorizationAlert',
+          'profileUpdateAlert',
+          'webEnabled',
+          'mobileEnabled',
+          'desktopEnabled'
         ]) &&
         prefs.keys().hasOnly([
           'securityDigest',
           'newDeviceAlert',
-          'appAuthorizationAlert'
+          'appAuthorizationAlert',
+          'profileUpdateAlert',
+          'webEnabled',
+          'mobileEnabled',
+          'desktopEnabled'
         ]) &&
         prefs.securityDigest is bool &&
         prefs.newDeviceAlert is bool &&
-        prefs.appAuthorizationAlert is bool;
+        prefs.appAuthorizationAlert is bool &&
+        prefs.profileUpdateAlert is bool &&
+        prefs.webEnabled is bool &&
+        prefs.mobileEnabled is bool &&
+        prefs.desktopEnabled is bool;
     }
 
     function isValidUserProfile(data, userId) {
@@ -128,11 +140,28 @@ service cloud.firestore {
         data.keys().hasAll([
           'uid',
           'email',
+          'secondaryEmail',
+          'firstName',
+          'lastName',
           'displayName',
           'handle',
+          'dateOfBirth',
+          'gender',
           'bio',
           'phone',
+          'website',
+          'streetAddress',
+          'city',
+          'stateRegion',
+          'postalCode',
+          'country',
           'location',
+          'timezone',
+          'preferredLanguage',
+          'occupation',
+          'company',
+          'emergencyContactName',
+          'emergencyContactPhone',
           'photoURL',
           'primaryPlatform',
           'linkedProviders',
@@ -145,11 +174,28 @@ service cloud.firestore {
         data.keys().hasOnly([
           'uid',
           'email',
+          'secondaryEmail',
+          'firstName',
+          'lastName',
           'displayName',
           'handle',
+          'dateOfBirth',
+          'gender',
           'bio',
           'phone',
+          'website',
+          'streetAddress',
+          'city',
+          'stateRegion',
+          'postalCode',
+          'country',
           'location',
+          'timezone',
+          'preferredLanguage',
+          'occupation',
+          'company',
+          'emergencyContactName',
+          'emergencyContactPhone',
           'photoURL',
           'primaryPlatform',
           'linkedProviders',
@@ -167,18 +213,53 @@ service cloud.firestore {
         data.email.size() >= 3 &&
         data.email.size() <= 254 &&
         data.email.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$') &&
+        data.secondaryEmail is string &&
+        data.secondaryEmail.size() <= 254 &&
+        (data.secondaryEmail.size() == 0 || data.secondaryEmail.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$')) &&
+        data.firstName is string &&
+        data.firstName.size() <= 40 &&
+        data.lastName is string &&
+        data.lastName.size() <= 40 &&
         data.displayName is string &&
         data.displayName.size() >= 1 &&
         data.displayName.size() <= 80 &&
         data.handle is string &&
         data.handle.size() <= 40 &&
         data.handle.matches('^[a-z0-9_.-]*$') &&
+        data.dateOfBirth is string &&
+        data.dateOfBirth.size() <= 20 &&
+        data.gender is string &&
+        data.gender.size() <= 32 &&
         data.bio is string &&
         data.bio.size() <= 300 &&
         data.phone is string &&
         data.phone.size() <= 32 &&
+        data.website is string &&
+        data.website.size() <= 200 &&
+        data.streetAddress is string &&
+        data.streetAddress.size() <= 120 &&
+        data.city is string &&
+        data.city.size() <= 60 &&
+        data.stateRegion is string &&
+        data.stateRegion.size() <= 60 &&
+        data.postalCode is string &&
+        data.postalCode.size() <= 24 &&
+        data.country is string &&
+        data.country.size() <= 80 &&
         data.location is string &&
         data.location.size() <= 80 &&
+        data.timezone is string &&
+        data.timezone.size() <= 64 &&
+        data.preferredLanguage is string &&
+        data.preferredLanguage.size() <= 40 &&
+        data.occupation is string &&
+        data.occupation.size() <= 80 &&
+        data.company is string &&
+        data.company.size() <= 80 &&
+        data.emergencyContactName is string &&
+        data.emergencyContactName.size() <= 80 &&
+        data.emergencyContactPhone is string &&
+        data.emergencyContactPhone.size() <= 32 &&
         data.photoURL is string &&
         data.photoURL.size() <= 500 &&
         isValidPlatform(data.primaryPlatform) &&
@@ -331,6 +412,66 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidAccountNotification(data, userId, notificationId) {
+      return data is map &&
+        data.keys().hasAll([
+          'id',
+          'ownerId',
+          'title',
+          'message',
+          'category',
+          'sourcePlatform',
+          'targetPlatforms',
+          'read',
+          'readAt',
+          'actionUrl',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerId',
+          'title',
+          'message',
+          'category',
+          'sourcePlatform',
+          'targetPlatforms',
+          'read',
+          'readAt',
+          'actionUrl',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.id is string &&
+        isValidId(data.id) &&
+        data.id == notificationId &&
+        data.ownerId is string &&
+        isValidId(data.ownerId) &&
+        data.ownerId == userId &&
+        data.ownerId == request.auth.uid &&
+        data.title is string &&
+        data.title.size() >= 1 &&
+        data.title.size() <= 100 &&
+        data.message is string &&
+        data.message.size() >= 1 &&
+        data.message.size() <= 300 &&
+        data.category is string &&
+        data.category in ['account', 'security', 'app', 'system'] &&
+        isValidPlatform(data.sourcePlatform) &&
+        data.targetPlatforms is list &&
+        data.targetPlatforms.size() >= 1 &&
+        data.targetPlatforms.size() <= 3 &&
+        data.targetPlatforms[0] is string &&
+        data.targetPlatforms.hasOnly(['web', 'mobile', 'desktop']) &&
+        data.read is bool &&
+        data.readAt is string &&
+        data.readAt.size() <= 40 &&
+        data.actionUrl is string &&
+        data.actionUrl.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
     function parentUserExists(userId) {
       return exists(/databases/$(database)/documents/users/$(userId));
     }
@@ -349,12 +490,23 @@ service cloud.firestore {
       allow update: if isValidId(userId) &&
         isOwner(userId) &&
         isValidUserProfile(incoming(), userId) &&
-        incoming().uid == existing().uid &&
-        incoming().createdAt == existing().createdAt &&
+        (
+          ('uid' in existing() && existing().uid is string && existing().uid.size() > 0 && incoming().uid == existing().uid) ||
+          ((!('uid' in existing()) || !(existing().uid is string) || existing().uid.size() == 0) && incoming().uid == userId)
+        ) &&
+        (
+          ('createdAt' in existing() && existing().createdAt is timestamp && incoming().createdAt == existing().createdAt) ||
+          ((!('createdAt' in existing()) || !(existing().createdAt is timestamp)) && incoming().createdAt == request.time)
+        ) &&
         incoming().updatedAt == request.time &&
         (
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'displayName', 'handle', 'bio', 'phone', 'location', 'photoURL', 'primaryPlatform', 'tags', 'updatedAt'
+            'secondaryEmail', 'firstName', 'lastName', 'displayName', 'handle',
+            'dateOfBirth', 'gender', 'bio', 'phone', 'website', 'streetAddress',
+            'city', 'stateRegion', 'postalCode', 'country', 'location',
+            'timezone', 'preferredLanguage', 'occupation', 'company',
+            'emergencyContactName', 'emergencyContactPhone', 'photoURL',
+            'primaryPlatform', 'tags', 'updatedAt'
           ]) ||
           incoming().diff(existing()).affectedKeys().hasOnly([
             'securityPreferences', 'updatedAt'
@@ -362,9 +514,26 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly([
             'notificationPreferences', 'updatedAt'
           ]) ||
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'linkedProviders', 'email', 'updatedAt'
-          ])
+          (
+            incoming().diff(existing()).addedKeys().hasOnly([
+              'uid', 'email', 'secondaryEmail', 'firstName', 'lastName', 'displayName', 'handle',
+              'dateOfBirth', 'gender', 'bio', 'phone', 'website', 'streetAddress',
+              'city', 'stateRegion', 'postalCode', 'country', 'location',
+              'timezone', 'preferredLanguage', 'occupation', 'company',
+              'emergencyContactName', 'emergencyContactPhone', 'photoURL',
+              'primaryPlatform', 'linkedProviders', 'tags',
+              'securityPreferences', 'notificationPreferences', 'createdAt', 'updatedAt'
+            ]) &&
+            incoming().diff(existing()).changedKeys().hasOnly([
+              'uid', 'email', 'secondaryEmail', 'firstName', 'lastName', 'displayName', 'handle',
+              'dateOfBirth', 'gender', 'bio', 'phone', 'website', 'streetAddress',
+              'city', 'stateRegion', 'postalCode', 'country', 'location',
+              'timezone', 'preferredLanguage', 'occupation', 'company',
+              'emergencyContactName', 'emergencyContactPhone', 'photoURL',
+              'primaryPlatform', 'linkedProviders', 'tags',
+              'securityPreferences', 'notificationPreferences', 'createdAt', 'updatedAt'
+            ])
+          )
         );
 
       allow delete: if isValidId(userId) && isOwner(userId);
@@ -450,6 +619,35 @@ service cloud.firestore {
           ]);
 
         allow delete: if isValidId(userId) && isValidId(tagId) && isOwner(userId) && parentUserExists(userId);
+      }
+
+      // Cross-Platform Notifications Subcollection (Master Gate)
+      match /notifications/{notificationId} {
+        allow get: if isValidId(userId) && isValidId(notificationId) && isOwner(userId) && parentUserExists(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId) &&
+          isValidId(notificationId) &&
+          isOwner(userId) &&
+          isValidAccountNotification(incoming(), userId, notificationId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if isValidId(userId) &&
+          isValidId(notificationId) &&
+          isOwner(userId) &&
+          isValidAccountNotification(incoming(), userId, notificationId) &&
+          incoming().id == existing().id &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'read', 'readAt', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(notificationId) && isOwner(userId) && parentUserExists(userId);
       }
     }
   }

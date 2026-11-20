@@ -23,31 +23,42 @@ Engineered by **Developer Ekene** ([GitHub](https://github.com/developerekene) �
 - Queries live **DNS-over-HTTPS MX records** (`https://dns.google/resolve`) to confirm the email domain publishes an active mail server capable of receiving verification emails.
 
 ### 3. Cross-Platform `redirect_to` Return Continuity (`src/lib/redirect.ts`, `src/components/RedirectHandoffBanner.tsx`)
-- Captures and safely validates the `redirect_to` query parameter for web URLs (`http(s)://`), relative routes (`/...`), and mobile/desktop deep-link schemes (`myapp://auth/callback`, `systemone-desktop://sso/complete`) while rejecting unsafe schemes (`javascript:`, `data:`).
+- Captures and safely validates the `redirect_to` query parameter for web URLs (`http(s)://`), relative routes (`/...`), and mobile/desktop deep-link schemes (`myapp://auth/callback`, `myapp-desktop://sso/complete`) while rejecting unsafe schemes (`javascript:`, `data:`).
 - Persists `redirect_to`, platform, and app name in both URL parameters and `sessionStorage` across sign-up, login, password recovery, email verification, and 2-step authentication transitions.
-- Appends safe session continuity parameters (`sso_status=authenticated`, `sso_uid`, `sso_platform`, `sso_origin`) when returning to the originating app, governed by the user's `trustedRedirectOnly` security preference.
-- Includes an interactive **Test Incoming `redirect_to` Flow** simulator in the Connected Apps workspace.
+- Appends safe session continuity parameters (`sso_status=authenticated`, `sso_uid`, `sso_platform`, `sso_origin`, `sso_unread_notifications`) when returning to the originating app, governed by the user's `trustedRedirectOnly` security preference.
 
 ### 4. In-Built 6-Digit TOTP Authenticator & Adaptive Post-Signup Security
 - **Built-In RFC 6238 6-Digit Authenticator (`src/lib/authenticator.ts`, `src/components/BuiltInAuthenticatorCard.tsx`)**:
   - Pure Web Crypto HMAC-SHA1 TOTP engine generating live rotating 6-digit codes every 30 seconds with a Base32 setup key and `otpauth://` URI.
-  - Accessible inside the Profile page, Security Center, Human Verification gate, and Login Verification challenge.
+  - Accessible inside the Profile page, Security page, Human Check gate, and Login Verification challenge.
 - **Post-Signup Profile Human Verification Gate (`src/components/OverviewSection.tsx`)**:
-  - Newly created accounts are directed straight to the Profile (`Overview`) page to verify they are human before creating or updating their profile:
-    - **Desktop / Web (non-mobile)**: Requires the **6-digit Authenticator App** only.
+  - Newly signed-in and newly created accounts open directly on the **Profile** page. Before editing profile details, new users complete an easy plain-language human check:
+    - **Desktop / Web (non-mobile)**: Uses the **6-digit Authenticator App** only.
     - **Mobile devices**: Offers a choice between **Biometrics** or the **6-digit Authenticator App**.
 - **Pre-Login Challenge Gate (`src/components/LoginChallengeGate.tsx`)**:
-  - Requires entering a 6-digit authenticator code (or choosing Biometrics on mobile) before completing login and redirecting back to connected apps.
+  - Requires entering a 6-digit authenticator code (or using Biometrics on mobile) before finishing sign-in and navigating to the Profile page or returning to a connected app.
 - **Bottom-Sheet Security Modal (`src/components/SecurityEnrollmentBottomModal.tsx`, `src/lib/securityEnrollment.ts`)**:
-  - Pops up smoothly from the bottom of the screen after human verification and profile setup:
-    - **Mobile**: Activates **Biometrics Login** (WebAuthn platform authenticator with device attestation fallback).
+  - Pops up smoothly from the bottom of the screen after the human check and profile setup:
+    - **Mobile**: Activates **Biometrics Login** (WebAuthn platform authenticator with device enrollment fallback).
     - **Desktop / Web**: Requires activating a SHA-256 salted **6-digit security PIN** enforced on a **3-month (90-day)** rotation cycle (`pinUpdatedAt` / `pinExpiresAt`).
 
-### 5. Unified Profile, Connected Apps, Security Center, Search & Tagging
-- **Unified Profile (`src/components/OverviewSection.tsx`)**: Manage display name, universal handle, summary, recovery phone, location, avatar portrait, primary platform, and account tags.
-- **Connected Apps Governance (`src/components/ConnectedAppsSection.tsx`)**: Register web, mobile, and desktop apps, assign tags, filter by platform/status, pause/resume/revoke access, and trigger `redirect_to` handoffs.
-- **Security Center & Audit Log (`src/components/SecuritySection.tsx`)**: Configure idle session timeouts, trusted redirect enforcement, notification channels, password reset emails, rotating 6-digit PIN status, built-in authenticator keys, and searchable immutable audit events.
-- **Tag Organization & Live Search (`src/components/TagsSection.tsx`, `src/App.tsx`)**: Create, edit, tone, and delete custom tags; filter across apps, events, and profile settings alongside global live search.
+### 5. Plain-Language Elaborate Profile, Cross-Platform Notifications & Zero Dummy Data
+- **Zero Pre-Seeded Dummy Data (`src/lib/firestoreService.ts`)**:
+  - Signed-in accounts start completely clean with no fake apps, fake tags, or sample profile bios—everything displayed reflects real user actions and real Firestore records.
+- **Plain-Language Elaborate Profile Page (`src/components/OverviewSection.tsx`)**:
+  - Written in clear, everyday language that anyone can easily understand.
+  - Captures complete profile information organized across five structured sections:
+    1. **Personal Details** (First Name, Last Name, Display Name, Username/Handle, Date of Birth, Gender, Short Bio, Profile Photo URL).
+    2. **Contact Information** (Recovery Email, Phone Number, Personal/Company Website).
+    3. **Home Address & Language** (Street Address, City, State/Region, Postal Code, Country, Preferred Language, Time Zone).
+    4. **Work & Organization** (Job Title/Occupation, Company or Organization).
+    5. **Emergency Contact & Main Device** (Emergency Contact Name, Emergency Contact Phone, Main Device Type, Custom Labels).
+- **Cross-Platform Notifications (`src/components/NotificationsSection.tsx`)**:
+  - Real-time Firestore-backed notification center (`/users/{userId}/notifications/{notificationId}`) synced across **Web**, **Mobile**, and **Desktop**.
+  - Users can filter by platform (`All`, `Web`, `Mobile`, `Desktop`) or status (`Unread`, `Read`), mark individual or all alerts as read, delete alerts, send custom cross-platform notifications, opt into browser push alerts (`Notification` API), and configure per-platform delivery and event preferences (`webEnabled`, `mobileEnabled`, `desktopEnabled`, `loginAlert`, `appLinkAlert`, `newDeviceAlert`, `profileUpdateAlert`, `weeklySecurityDigest`).
+  - Also passes `sso_unread_notifications` count back to connected external apps on `redirect_to` handoff.
+- **Connected Apps, Security & Label Organization (`src/components/ConnectedAppsSection.tsx`, `src/components/SecuritySection.tsx`, `src/components/TagsSection.tsx`)**:
+  - Register real web, mobile, and desktop apps, manage access status (`Active`, `Paused`, `Revoked`), inspect activity logs, rotate 90-day PINs, and filter everything cleanly with custom labels and live search.
 - **Page-Wide Skeleton Loading (`src/components/PageSkeletonLoader.tsx`)**: Renders light-mode loading skeletons for cards and list items when navigating across pages.
 
 ### 6. Light-Mode Accessibility & Hardened Firestore Security
@@ -58,14 +69,14 @@ Engineered by **Developer Ekene** ([GitHub](https://github.com/developerekene) �
 
 ## Project Structure
 
-- `src/App.tsx` — Root router, auth/session verification state, skeleton transitions, and workspace orchestration.
+- `src/App.tsx` — Root router, auth/session verification state, skeleton transitions, notification subscriptions, and workspace orchestration.
 - `src/lib/firebase.ts` — Firebase initialization using `firebase-applet-config.json`, `browserLocalPersistence`, connectivity test, and structured `handleFirestoreError`.
-- `src/lib/firestoreService.ts` — Defensive Firestore CRUD and real-time `onSnapshot` subscriptions.
+- `src/lib/firestoreService.ts` — Defensive Firestore CRUD, schema backfill, cross-platform notifications, and real-time `onSnapshot` subscriptions.
 - `src/lib/authenticator.ts` — RFC 6238 6-digit TOTP secret generator, code generator, and verifier.
 - `src/lib/emailValidator.ts` — Email syntax, disposable blocklist, typo detection, and DNS-over-HTTPS MX checker.
 - `src/lib/redirect.ts` — `redirect_to` parser, sanitizer, `sessionStorage` continuity, and return URL builder.
 - `src/lib/securityEnrollment.ts` — Mobile detection, WebAuthn biometrics enrollment, and SHA-256 90-day PIN hashing.
-- `src/components/` — Modular UI components (`AuthPortal`, `CreateAccountPage`, `LoginChallengeGate`, `BuiltInAuthenticatorCard`, `OverviewSection`, `ConnectedAppsSection`, `SecuritySection`, `TagsSection`, `SecurityEnrollmentBottomModal`, `PageSkeletonLoader`, `HomeSections`, `Footer`, `TopBar`, `SystemOneLogo`, `RedirectHandoffBanner`, `ErrorBoundary`).
+- `src/components/` — Modular UI components (`AuthPortal`, `CreateAccountPage`, `LoginChallengeGate`, `BuiltInAuthenticatorCard`, `OverviewSection`, `NotificationsSection`, `ConnectedAppsSection`, `SecuritySection`, `TagsSection`, `SecurityEnrollmentBottomModal`, `PageSkeletonLoader`, `HomeSections`, `Footer`, `TopBar`, `SystemOneLogo`, `RedirectHandoffBanner`, `ErrorBoundary`).
 
 ---
 

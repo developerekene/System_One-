@@ -10,7 +10,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { verifyTotpCode } from '../lib/authenticator';
-import { logSecurityEvent } from '../lib/firestoreService';
+import { createCrossPlatformNotification, logSecurityEvent } from '../lib/firestoreService';
 import { attemptPlatformBiometricEnrollment } from '../lib/securityEnrollment';
 import { RedirectContext, UserProfile } from '../types/systemOne';
 import { BuiltInAuthenticatorCard } from './BuiltInAuthenticatorCard';
@@ -47,12 +47,26 @@ export function LoginChallengeGate({
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const notifySignIn = async (platformLabel: 'web' | 'mobile' | 'desktop') => {
+    if (!profile.notificationPreferences.newDeviceAlert) return;
+    await createCrossPlatformNotification(
+      authUser.uid,
+      {
+        title: `New sign-in on ${platformLabel}`,
+        message: `You signed into your System One account on a ${platformLabel} device.`,
+        category: 'security',
+        sourcePlatform: platformLabel,
+      },
+      profile.notificationPreferences
+    );
+  };
+
   const handleVerifyAuthenticator = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     const cleaned = codeInput.replace(/\D/g, '').trim();
     if (cleaned.length !== 6) {
-      setErrorMsg('Please enter the 6-digit authenticator code.');
+      setErrorMsg('Please enter all 6 digits from your authenticator.');
       return;
     }
 
@@ -64,25 +78,28 @@ export function LoginChallengeGate({
       );
       if (!ok) {
         setErrorMsg(
-          'That 6-digit code does not match or has expired. Check your authenticator and try again.'
+          'That 6-digit code did not match or just expired. Try the newest code.'
         );
         return;
       }
 
+      const activePlatform = isMobileDevice ? 'mobile' : profile.primaryPlatform;
+
       await logSecurityEvent(authUser.uid, {
-        title: 'Login verified with 6-digit authenticator code',
+        title: 'Signed in with 6-digit authenticator code',
         category: 'auth',
-        platform: isMobileDevice ? 'mobile' : profile.primaryPlatform,
+        platform: activePlatform,
         provider: 'totp_authenticator',
         targetUrl: redirectContext?.redirectTo || window.location.origin,
-        tags: ['Security Audit', 'Core Identity'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
 
+      await notifySignIn(activePlatform);
       onVerified();
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Unable to verify authenticator code.'
+        err instanceof Error ? err.message : 'Unable to check authenticator code.'
       );
     } finally {
       setBusy(false);
@@ -99,20 +116,21 @@ export function LoginChallengeGate({
         profile.displayName
       );
       await logSecurityEvent(authUser.uid, {
-        title: `Mobile login verified via biometrics (${result.method})`,
+        title: `Signed in with mobile biometrics (${result.method})`,
         category: 'auth',
         platform: 'mobile',
         provider: result.method,
         targetUrl: redirectContext?.redirectTo || window.location.origin,
-        tags: ['Security Audit', 'Mobile Suite'],
+        tags: profile.tags.slice(0, 4),
         status: 'verified',
       });
+      await notifySignIn('mobile');
       onVerified();
     } catch (err) {
       setErrorMsg(
         err instanceof Error
           ? err.message
-          : 'Biometrics verification could not be completed. Use the 6-digit authenticator instead.'
+          : 'Biometric check did not complete. Please use the 6-digit code instead.'
       );
     } finally {
       setBusy(false);
@@ -142,23 +160,23 @@ export function LoginChallengeGate({
               {isMobileDevice ? (
                 <>
                   <Smartphone className="w-4 h-4" />
-                  <span>Mobile Verification Step</span>
+                  <span>Mobile Login Check</span>
                 </>
               ) : (
                 <>
                   <Monitor className="w-4 h-4" />
-                  <span>Authenticator Login Verification</span>
+                  <span>Authenticator Login Check</span>
                 </>
               )}
             </div>
             <h1 className="text-2xl font-bold text-slate-900">
-              Confirm your identity before continuing
+              Confirm it&apos;s really you
             </h1>
             <p className="text-sm text-slate-600 leading-relaxed">
               Signed in as <strong className="text-slate-900">{profile.email}</strong>.{' '}
               {redirectContext
-                ? `Complete this check to continue to ${redirectContext.appName}.`
-                : 'Complete this check to unlock your System One workspace.'}
+                ? `Finish this step to go back to ${redirectContext.appName}.`
+                : 'Finish this step to open your System One profile.'}
             </p>
           </div>
 
@@ -176,7 +194,7 @@ export function LoginChallengeGate({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Use Biometrics
+                Fingerprint / Face
               </button>
               <button
                 type="button"
@@ -190,7 +208,7 @@ export function LoginChallengeGate({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Use Authenticator (6-Digit)
+                6-Digit Code
               </button>
             </div>
           )}
@@ -209,8 +227,7 @@ export function LoginChallengeGate({
               <div className="p-4 rounded-xl bg-sky-50/70 border border-sky-200/80 flex items-start gap-3">
                 <Fingerprint className="w-5 h-5 text-sky-700 shrink-0 mt-0.5" />
                 <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-                  Verify using your mobile device biometrics, or switch to the 6-digit
-                  authenticator tab above.
+                  Use your phone&apos;s fingerprint or face unlock, or switch to the 6-digit code tab above.
                 </p>
               </div>
               <button
@@ -220,7 +237,7 @@ export function LoginChallengeGate({
                 className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-xl transition-colors"
               >
                 <Fingerprint className="w-4 h-4" />
-                <span>{busy ? 'Verifying...' : 'Verify with Biometrics'}</span>
+                <span>{busy ? 'Checking...' : 'Confirm with Fingerprint / Face'}</span>
               </button>
             </div>
           ) : (
@@ -230,7 +247,7 @@ export function LoginChallengeGate({
                   htmlFor="login-totp-code"
                   className="block text-sm font-medium text-slate-800 mb-1.5"
                 >
-                  6-Digit Authenticator Code
+                  Enter 6-Digit Code
                 </label>
                 <input
                   id="login-totp-code"
@@ -254,7 +271,7 @@ export function LoginChallengeGate({
                 className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 text-sm font-medium text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-xl transition-colors"
               >
                 <ShieldCheck className="w-4 h-4" />
-                <span>{busy ? 'Verifying...' : 'Verify & Continue'}</span>
+                <span>{busy ? 'Checking...' : 'Confirm & Open Profile'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -268,8 +285,8 @@ export function LoginChallengeGate({
                     <KeyRound className="w-3.5 h-3.5" />
                     <span>
                       {showBuiltInGenerator
-                        ? 'Hide Built-In System One Authenticator'
-                        : 'Open Built-In System One Authenticator'}
+                        ? 'Hide Built-In Authenticator'
+                        : 'Show Built-In 6-Digit Code'}
                     </span>
                   </button>
 
