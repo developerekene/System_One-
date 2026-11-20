@@ -1,0 +1,456 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidPlatform(val) {
+      return val is string && val in ['web', 'mobile', 'desktop'];
+    }
+
+    function isValidTagTone(val) {
+      return val is string && val in ['slate', 'sky', 'emerald', 'amber', 'indigo'];
+    }
+
+    function isValidStringArray(arr, maxCount, maxItemLen) {
+      return arr is list &&
+        arr.size() <= maxCount &&
+        (arr.size() == 0 || (arr[0] is string && arr[0].size() >= 1 && arr[0].size() <= maxItemLen));
+    }
+
+    function isValidSecurityPreferences(prefs) {
+      return prefs is map &&
+        prefs.keys().hasAll([
+          'twoFactorNotice',
+          'loginAlerts',
+          'sessionTimeoutMinutes',
+          'requireReauthForSensitive',
+          'trustedRedirectOnly',
+          'passwordRecoveryEmail',
+          'humanVerified',
+          'humanVerifiedAt',
+          'biometricsEnabled',
+          'pinConfigured',
+          'pinHash',
+          'pinUpdatedAt',
+          'pinExpiresAt',
+          'authenticatorEnabled',
+          'authenticatorSecret'
+        ]) &&
+        prefs.keys().hasOnly([
+          'twoFactorNotice',
+          'loginAlerts',
+          'sessionTimeoutMinutes',
+          'requireReauthForSensitive',
+          'trustedRedirectOnly',
+          'passwordRecoveryEmail',
+          'humanVerified',
+          'humanVerifiedAt',
+          'biometricsEnabled',
+          'pinConfigured',
+          'pinHash',
+          'pinUpdatedAt',
+          'pinExpiresAt',
+          'authenticatorEnabled',
+          'authenticatorSecret'
+        ]) &&
+        prefs.twoFactorNotice is bool &&
+        prefs.loginAlerts is bool &&
+        prefs.sessionTimeoutMinutes is number &&
+        prefs.sessionTimeoutMinutes in [15, 30, 60, 240, 1440] &&
+        prefs.requireReauthForSensitive is bool &&
+        prefs.trustedRedirectOnly is bool &&
+        prefs.passwordRecoveryEmail is string &&
+        prefs.passwordRecoveryEmail.size() <= 254 &&
+        (prefs.passwordRecoveryEmail.size() == 0 || prefs.passwordRecoveryEmail.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$')) &&
+        prefs.humanVerified is bool &&
+        prefs.humanVerifiedAt is string &&
+        prefs.humanVerifiedAt.size() <= 40 &&
+        prefs.biometricsEnabled is bool &&
+        prefs.pinConfigured is bool &&
+        prefs.pinHash is string &&
+        prefs.pinHash.size() <= 128 &&
+        prefs.pinUpdatedAt is string &&
+        prefs.pinUpdatedAt.size() <= 40 &&
+        prefs.pinExpiresAt is string &&
+        prefs.pinExpiresAt.size() <= 40 &&
+        prefs.authenticatorEnabled is bool &&
+        prefs.authenticatorSecret is string &&
+        prefs.authenticatorSecret.size() <= 64;
+    }
+
+    function isValidNotificationPreferences(prefs) {
+      return prefs is map &&
+        prefs.keys().hasAll([
+          'securityDigest',
+          'newDeviceAlert',
+          'appAuthorizationAlert'
+        ]) &&
+        prefs.keys().hasOnly([
+          'securityDigest',
+          'newDeviceAlert',
+          'appAuthorizationAlert'
+        ]) &&
+        prefs.securityDigest is bool &&
+        prefs.newDeviceAlert is bool &&
+        prefs.appAuthorizationAlert is bool;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data is map &&
+        data.keys().hasAll([
+          'uid',
+          'email',
+          'displayName',
+          'handle',
+          'bio',
+          'phone',
+          'location',
+          'photoURL',
+          'primaryPlatform',
+          'linkedProviders',
+          'tags',
+          'securityPreferences',
+          'notificationPreferences',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid',
+          'email',
+          'displayName',
+          'handle',
+          'bio',
+          'phone',
+          'location',
+          'photoURL',
+          'primaryPlatform',
+          'linkedProviders',
+          'tags',
+          'securityPreferences',
+          'notificationPreferences',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.uid is string &&
+        isValidId(data.uid) &&
+        data.uid == userId &&
+        data.uid == request.auth.uid &&
+        data.email is string &&
+        data.email.size() >= 3 &&
+        data.email.size() <= 254 &&
+        data.email.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$') &&
+        data.displayName is string &&
+        data.displayName.size() >= 1 &&
+        data.displayName.size() <= 80 &&
+        data.handle is string &&
+        data.handle.size() <= 40 &&
+        data.handle.matches('^[a-z0-9_.-]*$') &&
+        data.bio is string &&
+        data.bio.size() <= 300 &&
+        data.phone is string &&
+        data.phone.size() <= 32 &&
+        data.location is string &&
+        data.location.size() <= 80 &&
+        data.photoURL is string &&
+        data.photoURL.size() <= 500 &&
+        isValidPlatform(data.primaryPlatform) &&
+        isValidStringArray(data.linkedProviders, 5, 40) &&
+        isValidStringArray(data.tags, 10, 32) &&
+        isValidSecurityPreferences(data.securityPreferences) &&
+        isValidNotificationPreferences(data.notificationPreferences) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidConnectedApp(data, userId, appId) {
+      return data is map &&
+        data.keys().hasAll([
+          'id',
+          'ownerId',
+          'name',
+          'platform',
+          'description',
+          'redirectUri',
+          'status',
+          'tags',
+          'scopes',
+          'lastPlatformSource',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerId',
+          'name',
+          'platform',
+          'description',
+          'redirectUri',
+          'status',
+          'tags',
+          'scopes',
+          'lastPlatformSource',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.id is string &&
+        isValidId(data.id) &&
+        data.id == appId &&
+        data.ownerId is string &&
+        isValidId(data.ownerId) &&
+        data.ownerId == userId &&
+        data.ownerId == request.auth.uid &&
+        data.name is string &&
+        data.name.size() >= 1 &&
+        data.name.size() <= 60 &&
+        isValidPlatform(data.platform) &&
+        data.description is string &&
+        data.description.size() <= 200 &&
+        data.redirectUri is string &&
+        data.redirectUri.size() >= 1 &&
+        data.redirectUri.size() <= 500 &&
+        data.status is string &&
+        data.status in ['active', 'paused', 'revoked'] &&
+        isValidStringArray(data.tags, 8, 32) &&
+        isValidStringArray(data.scopes, 8, 40) &&
+        isValidPlatform(data.lastPlatformSource) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSecurityEvent(data, userId, eventId) {
+      return data is map &&
+        data.keys().hasAll([
+          'id',
+          'ownerId',
+          'title',
+          'category',
+          'platform',
+          'provider',
+          'targetUrl',
+          'tags',
+          'status',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerId',
+          'title',
+          'category',
+          'platform',
+          'provider',
+          'targetUrl',
+          'tags',
+          'status',
+          'createdAt'
+        ]) &&
+        data.id is string &&
+        isValidId(data.id) &&
+        data.id == eventId &&
+        data.ownerId is string &&
+        isValidId(data.ownerId) &&
+        data.ownerId == userId &&
+        data.ownerId == request.auth.uid &&
+        data.title is string &&
+        data.title.size() >= 1 &&
+        data.title.size() <= 100 &&
+        data.category is string &&
+        data.category in ['auth', 'redirect', 'security', 'profile', 'app'] &&
+        isValidPlatform(data.platform) &&
+        data.provider is string &&
+        data.provider.size() <= 40 &&
+        data.targetUrl is string &&
+        data.targetUrl.size() <= 500 &&
+        isValidStringArray(data.tags, 8, 32) &&
+        data.status is string &&
+        data.status in ['verified', 'completed', 'pending', 'revoked'] &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidAccountTag(data, userId, tagId) {
+      return data is map &&
+        data.keys().hasAll([
+          'id',
+          'ownerId',
+          'label',
+          'description',
+          'tone',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerId',
+          'label',
+          'description',
+          'tone',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.id is string &&
+        isValidId(data.id) &&
+        data.id == tagId &&
+        data.ownerId is string &&
+        isValidId(data.ownerId) &&
+        data.ownerId == userId &&
+        data.ownerId == request.auth.uid &&
+        data.label is string &&
+        data.label.size() >= 1 &&
+        data.label.size() <= 32 &&
+        data.description is string &&
+        data.description.size() <= 120 &&
+        isValidTagTone(data.tone) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function parentUserExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // Unified User Profile (Strict Owner-Only PII Isolation)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'handle', 'bio', 'phone', 'location', 'photoURL', 'primaryPlatform', 'tags', 'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'securityPreferences', 'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'notificationPreferences', 'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'linkedProviders', 'email', 'updatedAt'
+          ])
+        );
+
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      // Connected Apps Subcollection (Master Gate)
+      match /connectedApps/{appId} {
+        allow get: if isValidId(userId) && isValidId(appId) && isOwner(userId) && parentUserExists(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId) &&
+          isValidId(appId) &&
+          isOwner(userId) &&
+          isValidConnectedApp(incoming(), userId, appId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if isValidId(userId) &&
+          isValidId(appId) &&
+          isOwner(userId) &&
+          isValidConnectedApp(incoming(), userId, appId) &&
+          existing().status != 'revoked' &&
+          incoming().id == existing().id &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'platform', 'description', 'redirectUri', 'tags', 'scopes', 'updatedAt'
+            ]) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'updatedAt'
+            ]) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastPlatformSource', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(appId) && isOwner(userId) && parentUserExists(userId);
+      }
+
+      // Security Events Subcollection (Append-Only Audit Trail)
+      match /securityEvents/{eventId} {
+        allow get: if isValidId(userId) && isValidId(eventId) && isOwner(userId) && parentUserExists(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId) &&
+          isValidId(eventId) &&
+          isOwner(userId) &&
+          isValidSecurityEvent(incoming(), userId, eventId) &&
+          incoming().createdAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(eventId) && isOwner(userId) && parentUserExists(userId);
+      }
+
+      // Account Tags Subcollection
+      match /tags/{tagId} {
+        allow get: if isValidId(userId) && isValidId(tagId) && isOwner(userId) && parentUserExists(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId) &&
+          isValidId(tagId) &&
+          isOwner(userId) &&
+          isValidAccountTag(incoming(), userId, tagId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId);
+
+        allow update: if isValidId(userId) &&
+          isValidId(tagId) &&
+          isOwner(userId) &&
+          isValidAccountTag(incoming(), userId, tagId) &&
+          incoming().id == existing().id &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          parentUserExists(userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'label', 'description', 'tone', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(tagId) && isOwner(userId) && parentUserExists(userId);
+      }
+    }
+  }
+}

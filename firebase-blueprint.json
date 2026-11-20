@@ -1,0 +1,456 @@
+{
+  "entities": {
+    "SecurityPreferences": {
+      "title": "SecurityPreferences",
+      "description": "Cross-platform security preferences for a unified System One account.",
+      "type": "object",
+      "properties": {
+        "twoFactorNotice": {
+          "type": "boolean",
+          "description": "Whether enhanced multi-factor verification reminders are enabled."
+        },
+        "loginAlerts": {
+          "type": "boolean",
+          "description": "Notify user when a new SSO session begins."
+        },
+        "sessionTimeoutMinutes": {
+          "type": "number",
+          "enum": [15, 30, 60, 240, 1440],
+          "description": "Preferred idle session duration across connected apps."
+        },
+        "requireReauthForSensitive": {
+          "type": "boolean",
+          "description": "Require fresh authentication before changing security preferences or revoking apps."
+        },
+        "trustedRedirectOnly": {
+          "type": "boolean",
+          "description": "Restrict SSO redirect_to transitions to registered app URIs or verified origins."
+        },
+        "passwordRecoveryEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+          "description": "Backup recovery email address."
+        },
+        "humanVerified": {
+          "type": "boolean",
+          "description": "Whether the user has passed interactive human verification on the profile page."
+        },
+        "humanVerifiedAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp when human verification was completed."
+        },
+        "biometricsEnabled": {
+          "type": "boolean",
+          "description": "Whether mobile biometric login has been activated."
+        },
+        "pinConfigured": {
+          "type": "boolean",
+          "description": "Whether a 6-digit security PIN is configured for desktop/web access."
+        },
+        "pinHash": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "SHA-256 salted digest of the 6-digit security PIN."
+        },
+        "pinUpdatedAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp when the 6-digit PIN was last set or rotated."
+        },
+        "pinExpiresAt": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "ISO timestamp 90 days after pinUpdatedAt when the PIN must be changed."
+        },
+        "authenticatorEnabled": {
+          "type": "boolean",
+          "description": "Whether the built-in 6-digit TOTP authenticator is activated."
+        },
+        "authenticatorSecret": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Base32 secret key used by the built-in 6-digit TOTP authenticator."
+        }
+      },
+      "required": [
+        "twoFactorNotice",
+        "loginAlerts",
+        "sessionTimeoutMinutes",
+        "requireReauthForSensitive",
+        "trustedRedirectOnly",
+        "passwordRecoveryEmail",
+        "humanVerified",
+        "humanVerifiedAt",
+        "biometricsEnabled",
+        "pinConfigured",
+        "pinHash",
+        "pinUpdatedAt",
+        "pinExpiresAt",
+        "authenticatorEnabled",
+        "authenticatorSecret"
+      ]
+    },
+    "NotificationPreferences": {
+      "title": "NotificationPreferences",
+      "description": "Account notification settings across platforms.",
+      "type": "object",
+      "properties": {
+        "securityDigest": {
+          "type": "boolean",
+          "description": "Weekly account security summary."
+        },
+        "newDeviceAlert": {
+          "type": "boolean",
+          "description": "Immediate alert on new platform sign-in."
+        },
+        "appAuthorizationAlert": {
+          "type": "boolean",
+          "description": "Alert when a connected application requests SSO access."
+        }
+      },
+      "required": [
+        "securityDigest",
+        "newDeviceAlert",
+        "appAuthorizationAlert"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Unified System One identity profile, account settings, and cross-platform security preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching the document ID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+          "description": "Primary account email."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "User display name across all System One connected applications."
+        },
+        "handle": {
+          "type": "string",
+          "maxLength": 40,
+          "pattern": "^[a-z0-9_.-]*$",
+          "description": "Unified cross-app username handle."
+        },
+        "bio": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Short profile summary."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional recovery phone number."
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "City or region."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Profile avatar URL."
+        },
+        "primaryPlatform": {
+          "type": "string",
+          "enum": ["web", "mobile", "desktop"],
+          "description": "User's primary access platform."
+        },
+        "linkedProviders": {
+          "type": "array",
+          "description": "Bound sign-in providers such as google.com and password."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Organizational tags applied to the unified account."
+        },
+        "securityPreferences": {
+          "type": "object",
+          "$ref": "#/entities/SecurityPreferences",
+          "description": "Security preferences object."
+        },
+        "notificationPreferences": {
+          "type": "object",
+          "$ref": "#/entities/NotificationPreferences",
+          "description": "Notification preferences object."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "handle",
+        "bio",
+        "phone",
+        "location",
+        "photoURL",
+        "primaryPlatform",
+        "linkedProviders",
+        "tags",
+        "securityPreferences",
+        "notificationPreferences",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ConnectedApp": {
+      "title": "ConnectedApp",
+      "description": "Registered mobile, desktop, or web application authorized through System One SSO.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the connected application."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Display name of the connected application."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["web", "mobile", "desktop"],
+          "description": "Origin platform of the connected application."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Concise purpose of this connected app."
+        },
+        "redirectUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Registered callback URL or mobile deep-link used by redirect_to."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "paused", "revoked"],
+          "description": "Authorization state for this application."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Up to 8 organizational tags."
+        },
+        "scopes": {
+          "type": "array",
+          "description": "Up to 8 granted SSO scopes."
+        },
+        "lastPlatformSource": {
+          "type": "string",
+          "enum": ["web", "mobile", "desktop"],
+          "description": "Most recent platform used to launch or return to this app."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of app registration."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last status or configuration change."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "platform",
+        "description",
+        "redirectUri",
+        "status",
+        "tags",
+        "scopes",
+        "lastPlatformSource",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SecurityEvent": {
+      "title": "SecurityEvent",
+      "description": "Authentication, redirect transition, and security audit log entry.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the security event."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Human-readable description of the event."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["auth", "redirect", "security", "profile", "app"],
+          "description": "Event category."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["web", "mobile", "desktop"],
+          "description": "Platform from which the event originated."
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Authentication provider or transition mechanism."
+        },
+        "targetUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Associated redirect_to URL if applicable."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Up to 8 organizational tags."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["verified", "completed", "pending", "revoked"],
+          "description": "Outcome status of the event."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the event."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "category",
+        "platform",
+        "provider",
+        "targetUrl",
+        "tags",
+        "status",
+        "createdAt"
+      ]
+    },
+    "AccountTag": {
+      "title": "AccountTag",
+      "description": "User-defined organizational tag for categorizing connected apps, settings, and events.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the tag."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Short tag name."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "What this tag organizes."
+        },
+        "tone": {
+          "type": "string",
+          "enum": ["slate", "sky", "emerald", "amber", "indigo"],
+          "description": "Light-mode visual category tone."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of tag creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of tag update."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "label",
+        "description",
+        "tone",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private unified account profile and preferences owned strictly by userId."
+    },
+    "/users/{userId}/connectedApps/{appId}": {
+      "schema": { "$ref": "#/entities/ConnectedApp" },
+      "description": "Connected mobile, desktop, and web applications authorized under the user's SSO profile."
+    },
+    "/users/{userId}/securityEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/SecurityEvent" },
+      "description": "Immutable audit log entries for authentication and redirect_to transitions."
+    },
+    "/users/{userId}/tags/{tagId}": {
+      "schema": { "$ref": "#/entities/AccountTag" },
+      "description": "User-managed tags for organizing connected applications and security activity."
+    }
+  }
+}

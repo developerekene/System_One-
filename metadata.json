@@ -1,0 +1,6 @@
+{
+  "name": "System One",
+  "description": "Unified single sign-on, cross-platform authentication, profile management, and security preferences portal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
